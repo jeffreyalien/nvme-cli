@@ -64,6 +64,7 @@
 #define WDC_NVME_SN520_DEV_ID_1  		0x5003
 #define WDC_NVME_SN520_DEV_ID_2  		0x5005
 #define WDC_NVME_SN720_DEV_ID   		0x5002
+#define WDC_NVME_SN730_DEV_ID   		0x5006
 
 /* Capture Diagnostics */
 #define WDC_NVME_CAP_DIAG_HEADER_TOC_SIZE	WDC_NVME_LOG_SIZE_DATA_LEN
@@ -74,6 +75,12 @@
 
 #define WDC_NVME_CRASH_DUMP_TYPE		1
 #define WDC_NVME_PFAIL_DUMP_TYPE		2
+
+/* Capture Device Unit Info */
+#define WDC_NVME_CAP_DUI_HEADER_SIZE			0x400
+#define WDC_NVME_CAP_DUI_OPCODE				0xFA
+#define WDC_NVME_DUI_MAX_SECTION			0x3A
+#define WDC_NVME_DUI_MAX_DATA_AREA			0x05
 
 /* Crash dump */
 #define WDC_NVME_CRASH_DUMP_SIZE_OPCODE		WDC_NVME_CAP_DIAG_CMD_OPCODE
@@ -340,6 +347,22 @@ struct wdc_e6_log_hdr {
 	__u8	log_size[4];
 };
 
+/* DUI log header */
+struct wdc_dui_log_section {
+	__le16	section_type;
+	__le16	data_area_id;
+	__le32	section_size;
+};
+
+struct wdc_dui_log_hdr {
+	__u8    telemetry_hdr[512];
+	__le16	hdr_version;
+	__le16	section_count;
+	__u8	log_size[4];
+	struct	wdc_dui_log_section log_section[WDC_NVME_DUI_MAX_SECTION];
+	__u8    log_data[40];
+};
+
 /* Purge monitor response */
 struct wdc_nvme_purge_monitor_data {
 	__le16 	rsvd1;
@@ -427,6 +450,22 @@ struct __attribute__((__packed__)) wdc_ssd_ca_perf_stats {
 	__le32	rsvd2;						/* 0x7C - Reserved							*/
 };
 
+/* VS NAND Stats */
+#define WDC_NVME_NAND_STATS_LOG_ID			0xFB
+#define WDC_NVME_NAND_STATS_SIZE			0x200
+
+struct __attribute__((__packed__)) wdc_nand_stats {
+	__u8		nand_write_tlc[16];
+	__u8		nand_write_slc[16];
+	__le32		nand_prog_failure;
+	__le32		nand_erase_failure;
+	__le32		bad_block_count;
+	__le64		nand_rec_trigger_event;
+	__le64		e2e_error_counter;
+	__le64		successful_ns_resize_event;
+	__u8		rsvd[444];
+};
+
 static double safe_div_fp(double numerator, double denominator)
 {
 	return denominator ? numerator / denominator : 0;
@@ -436,6 +475,18 @@ static double calc_percent(uint64_t numerator, uint64_t denominator)
 {
 	return denominator ?
 		(uint64_t)(((double)numerator / (double)denominator) * 100) : 0;
+}
+
+static long double int128_to_double(__u8 *data)
+{
+	int i;
+	long double result = 0;
+
+	for (i = 0; i < 16; i++) {
+		result *= 256;
+		result += data[15 - i];
+	}
+	return result;
 }
 
 static int wdc_get_pci_ids(int *device_id, int *vendor_id)
@@ -1002,6 +1053,120 @@ static int wdc_cap_diag(int argc, char **argv, struct command *command,
 	return 0;
 }
 
+static __u32 wdc_dump_dui_data(int fd, __u32 dataLen, __u32 offset, __u8 *dump_data)
+{
+	int ret;
+	struct nvme_admin_cmd admin_cmd;
+
+	memset(&admin_cmd, 0, sizeof (struct nvme_admin_cmd));
+	admin_cmd.opcode = WDC_NVME_CAP_DUI_OPCODE;
+	admin_cmd.nsid = 0xFFFFFFFF;
+	admin_cmd.addr = (__u64)(uintptr_t)dump_data;
+	admin_cmd.data_len = dataLen;
+	admin_cmd.cdw10 = ((dataLen >> 2) - 1);
+	admin_cmd.cdw12 = offset;
+
+	ret = nvme_submit_passthru(fd, NVME_IOCTL_ADMIN_CMD, &admin_cmd);
+	if (ret != 0) {
+		fprintf(stderr, "ERROR : WDC : reading DUI length failed\n");
+		fprintf(stderr, "NVMe Status:%s(%x)\n", nvme_status_to_string(ret), ret);
+	}
+
+	return ret;
+}
+
+static int wdc_do_cap_dui(int fd, char *file, __u32 xfer_size, int data_area)
+{
+	int ret = 0;
+	__u32 dui_log_hdr_size = WDC_NVME_CAP_DUI_HEADER_SIZE;
+	struct wdc_dui_log_hdr *log_hdr;
+	__u32 cap_dui_length;
+	__u8 *dump_data;
+	__u64 buffer_addr;
+	__u32 curr_data_offset;
+	__s32 log_size = 0;
+	__s32 total_size = 0;
+	int i;
+
+	log_hdr = (struct wdc_dui_log_hdr *) malloc(dui_log_hdr_size);
+	if (log_hdr == NULL) {
+		fprintf(stderr, "%s: ERROR : malloc : %s\n", __func__, strerror(errno));
+		return -1;
+	}
+	memset(log_hdr, 0, dui_log_hdr_size);
+
+	/* get the dui telemetry and log headers  */
+	ret = wdc_dump_dui_data(fd, WDC_NVME_CAP_DUI_HEADER_SIZE, 0x00,	(__u8 *)log_hdr);
+	if (ret != 0) {
+		fprintf(stderr, "%s: ERROR : WDC : Get DUI headers failed\n", __func__);
+		fprintf(stderr, "%s: ERROR : WDC : NVMe Status:%s(%x)\n", __func__, nvme_status_to_string(ret), ret);
+		goto out;
+	}
+
+	cap_dui_length = (log_hdr->log_size[3] << 24 | log_hdr->log_size[2] << 16 |
+			log_hdr->log_size[1] << 8 | log_hdr->log_size[0]);
+
+	if (cap_dui_length == 0) {
+		fprintf(stderr, "INFO : WDC : Capture Device Unit Info log is empty\n");
+	} else {
+
+		/* parse log header for all sections up to specified data area inclusively */
+		if (data_area != WDC_NVME_DUI_MAX_DATA_AREA) {
+			for(int i = 0; i < WDC_NVME_DUI_MAX_SECTION; i++) {
+				if (log_hdr->log_section[i].data_area_id <= data_area &&
+				    log_hdr->log_section[i].data_area_id != 0)
+					log_size += log_hdr->log_section[i].section_size;
+				else
+					break;
+			}
+		} else
+			log_size = cap_dui_length;
+
+		total_size = log_size;
+		dump_data = (__u8 *) malloc(sizeof (__u8) * total_size);
+		if (dump_data == NULL) {
+			fprintf(stderr, "%s: ERROR : malloc : %s\n", __func__, strerror(errno));
+			ret = -1;
+			goto out;
+		}
+		memset(dump_data, 0, sizeof (__u8) * total_size);
+
+		/* copy the telemetry and log headers into the dump_data buffer */
+		memcpy(dump_data, log_hdr, WDC_NVME_CAP_DUI_HEADER_SIZE);
+
+		log_size -= WDC_NVME_CAP_DUI_HEADER_SIZE;
+		curr_data_offset = WDC_NVME_CAP_DUI_HEADER_SIZE;
+		i = 0;
+
+		for(; log_size > 0; log_size -= xfer_size) {
+			xfer_size = min(xfer_size, log_size);
+
+			buffer_addr = (__u64)(uintptr_t)dump_data + (__u64)curr_data_offset;
+			ret = wdc_dump_dui_data(fd, xfer_size, curr_data_offset, (__u8 *)buffer_addr);
+			if (ret != 0) {
+				fprintf(stderr, "%s: ERROR : WDC : Get chunk %d, size = 0x%x, offset = 0x%x, addr = 0x%lx\n",
+						__func__, i, total_size, curr_data_offset, (long unsigned int)buffer_addr);
+				fprintf(stderr, "%s: ERROR : WDC : NVMe Status:%s(%x)\n", __func__, nvme_status_to_string(ret), ret);
+				break;
+			}
+
+			curr_data_offset += xfer_size;
+			i++;
+		}
+
+		if (ret == 0) {
+			fprintf(stderr, "%s:  NVMe Status:%s(%x)\n", __func__, nvme_status_to_string(ret), ret);
+			fprintf(stderr, "INFO : WDC : Capture Device Unit Info log, length = 0x%x\n", total_size);
+
+			ret = wdc_create_log_file(file, dump_data, total_size);
+		}
+		free(dump_data);
+	}
+out:
+	free(log_hdr);
+	return ret;
+}
+
 static int wdc_internal_fw_log(int argc, char **argv, struct command *command,
                struct plugin *plugin)
 {
@@ -1062,8 +1227,11 @@ static int wdc_internal_fw_log(int argc, char **argv, struct command *command,
 		wdc_check_device_match(fd, WDC_NVME_VID_2, WDC_NVME_SN310_DEV_ID) ||
 		wdc_check_device_match(fd, WDC_NVME_VID_2, WDC_NVME_SN510_DEV_ID)) {
 		return wdc_do_cap_diag(fd, f, xfer_size);
+	} else if (wdc_check_device_match(fd, WDC_NVME_SNDK_VID, WDC_NVME_SN720_DEV_ID) ||
+			   wdc_check_device_match(fd, WDC_NVME_SNDK_VID, WDC_NVME_SN730_DEV_ID)) {
+		return wdc_do_cap_dui(fd, f, xfer_size, WDC_NVME_DUI_MAX_DATA_AREA);
 	} else {
-		fprintf(stderr, "ERROR : WDC: unsupported device for internal_fw_log command\n");
+	    fprintf(stderr, "ERROR : WDC: unsupported device for internal_fw_log command\n");
 		return -1;
 	}
 }
@@ -2629,3 +2797,129 @@ static int wdc_drive_essentials(int argc, char **argv, struct command *command,
 
 	return wdc_do_drive_essentials(fd, d_ptr, k);
 }
+
+static void wdc_print_nand_stats_normal(struct wdc_nand_stats *data)
+{
+	printf("  NAND Statistics :- \n");
+	printf("  NAND Writes TLC (Bytes)		         %.0Lf\n",
+			int128_to_double(data->nand_write_tlc));
+	printf("  NAND Writes SLC (Bytes)		         %.0Lf\n",
+			int128_to_double(data->nand_write_slc));
+	printf("  NAND Program Failures			  	 %"PRIu32"\n",
+			(uint32_t)le32_to_cpu(data->nand_prog_failure));
+	printf("  NAND Erase Failures				 %"PRIu32"\n",
+			(uint32_t)le32_to_cpu(data->nand_erase_failure));
+	printf("  Bad Block Count			         %"PRIu32"\n",
+			(uint32_t)le32_to_cpu(data->bad_block_count));
+	printf("  NAND XOR/RAID Recovery Trigger Events		 %"PRIu64"\n",
+			(long unsigned int)le64_to_cpu(data->nand_rec_trigger_event));
+	printf("  E2E Error Counter                    		 %"PRIu64"\n",
+			(long unsigned int)le64_to_cpu(data->e2e_error_counter));
+	printf("  Number Successful NS Resizing Events		 %"PRIu64"\n",
+			(long unsigned int)le64_to_cpu(data->successful_ns_resize_event));
+}
+
+static void wdc_print_nand_stats_json(struct wdc_nand_stats *data)
+{
+	struct json_object *root;
+
+	root = json_create_object();
+	json_object_add_value_float(root, "NAND Writes TLC (Bytes)",
+			int128_to_double(data->nand_write_tlc));
+	json_object_add_value_float(root, "NAND Writes SLC (Bytes)",
+			int128_to_double(data->nand_write_slc));
+	json_object_add_value_uint(root, "NAND Program Failures",
+			le32_to_cpu(data->nand_prog_failure));
+	json_object_add_value_uint(root, "NAND Erase Failures",
+			le32_to_cpu(data->nand_erase_failure));
+	json_object_add_value_uint(root, "Bad Block Count",
+			le32_to_cpu(data->bad_block_count));
+	json_object_add_value_uint(root, "NAND XOR/RAID Recovery Trigger Events",
+			le64_to_cpu(data->nand_rec_trigger_event));
+	json_object_add_value_uint(root, "E2E Error Counter",
+			le64_to_cpu(data->e2e_error_counter));
+	json_object_add_value_uint(root, "Number Successful NS Resizing Events",
+			le64_to_cpu(data->successful_ns_resize_event));
+
+	json_print_object(root, NULL);
+	printf("\n");
+	json_free_object(root);
+}
+
+static int wdc_do_vs_nand_stats(int fd, char *format)
+{
+	int ret;
+	int fmt = -1;
+	uint8_t *output = NULL;
+	struct wdc_nand_stats *nand_stats;
+
+	if ((output = (uint8_t*)calloc(WDC_NVME_NAND_STATS_SIZE, sizeof(uint8_t))) == NULL) {
+		fprintf(stderr, "ERROR : WDC : calloc : %s\n", strerror(errno));
+		ret = -1;
+		goto out;
+	}
+
+	ret = nvme_get_log(fd, 0xFFFFFFFF, WDC_NVME_NAND_STATS_LOG_ID,
+			   false, WDC_NVME_NAND_STATS_SIZE, (void*)output);
+	if (ret) {
+		fprintf(stderr, "ERROR : WDC : %s : Failed to retreive NAND stats\n", __func__);
+		goto out;
+	} else {
+		fmt = validate_output_format(format);
+		if (fmt < 0) {
+			fprintf(stderr, "ERROR : WDC : invalid output format\n");
+			ret = fmt;
+			goto out;
+		}
+
+		/* parse the data */
+		nand_stats = (struct wdc_nand_stats *)(output);
+		switch (fmt) {
+		case NORMAL:
+			wdc_print_nand_stats_normal(nand_stats);
+			break;
+		case JSON:
+			wdc_print_nand_stats_json(nand_stats);
+			break;
+		}
+	}
+
+out:
+	free(output);
+	return ret;
+}
+
+
+static int wdc_vs_nand_stats(int argc, char **argv, struct command *command,
+		struct plugin *plugin)
+{
+	const char *desc = "Retrieve NAND statistics.";
+	int fd;
+	int ret = 0;
+
+	struct config {
+		char *output_format;
+	};
+
+	struct config cfg = {
+		.output_format = "normal",
+	};
+
+	const struct argconfig_commandline_options command_line_options[] = {
+			{"output-format", 'o', "FMT", CFG_STRING, &cfg.output_format, required_argument, "Output Format: normal|json" },
+			{ NULL, '\0', NULL, CFG_NONE, NULL, no_argument, desc},
+			{NULL}
+	};
+
+	fd = parse_and_open(argc, argv, desc, command_line_options, NULL, 0);
+	if (fd < 0)
+		return fd;
+
+
+	ret = wdc_do_vs_nand_stats(fd, cfg.output_format);
+	if (ret)
+		fprintf(stderr, "ERROR : WDC : Failure reading NAND statistics, ret = %d\n", ret);
+
+	return ret;
+}
+

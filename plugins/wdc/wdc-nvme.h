@@ -19,6 +19,7 @@ PLUGIN(NAME("wdc", "Western Digital vendor specific extensions"),
 		ENTRY("smart-add-log", "WDC Additional Smart Log", wdc_smart_add_log)
 		ENTRY("clear-pcie-corr", "WDC Clear PCIe Correctable Error Count", wdc_clear_pcie_corr)
 		ENTRY("drive-essentials", "WDC Drive Essentials", wdc_drive_essentials)
+		ENTRY("vs-nand-stats", "WDC NAND Statistics", wdc_vs_nand_stats)
 	)
 );
 
