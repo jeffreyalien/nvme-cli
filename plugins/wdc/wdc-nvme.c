@@ -7029,37 +7029,37 @@ static void wdc_print_nand_stats_json(__u16 version, void *data)
 static void wdc_print_pcie_stats_normal(struct wdc_vs_pcie_stats *pcie_stats)
 {
 	printf("  PCIE Statistics :- \n");
-	printf("  Unsupported Request Error Counter             %016"PRIu64"\n",
+	printf("  Unsupported Request Error Counter             %20"PRIu64"\n",
 			le64_to_cpu(pcie_stats->unsupportedRequestErrorCount));
-	printf("  ECRC Error Status Counter                     %016"PRIu64"\n",
+	printf("  ECRC Error Status Counter                     %20"PRIu64"\n",
 			le64_to_cpu(pcie_stats->ecrcErrorStatusCount));
-	printf("  Malformed TLP Status Counter                  %016"PRIu64"\n",
+	printf("  Malformed TLP Status Counter                  %20"PRIu64"\n",
 			le64_to_cpu(pcie_stats->malformedTlpStatusCount));
-	printf("  Receiver Overflow Status Counter              %016"PRIu64"\n",
+	printf("  Receiver Overflow Status Counter              %20"PRIu64"\n",
 			le64_to_cpu(pcie_stats->receiverOverflowStatusCount));
-	printf("  Unexpected Completion Status Counter          %016"PRIu64"\n",
+	printf("  Unexpected Completion Status Counter          %20"PRIu64"\n",
 			le64_to_cpu(pcie_stats->unexpectedCmpltnStatusCount));
-	printf("  Complete Abort Status Counter                 %016"PRIu64"\n",
+	printf("  Complete Abort Status Counter                 %20"PRIu64"\n",
 			le64_to_cpu(pcie_stats->completeAbortStatusCount));
-	printf("  Completion Timeout Status Counter             %016"PRIu64"\n",
+	printf("  Completion Timeout Status Counter             %20"PRIu64"\n",
 			le64_to_cpu(pcie_stats->cmpltnTimoutStatusCount));
-	printf("  Flow Control Error Status Counter             %016"PRIu64"\n",
+	printf("  Flow Control Error Status Counter             %20"PRIu64"\n",
 			le64_to_cpu(pcie_stats->flowControlErrorStatusCount));
-	printf("  Poisoned TLP Status Counter                   %016"PRIu64"\n",
+	printf("  Poisoned TLP Status Counter                   %20"PRIu64"\n",
 			le64_to_cpu(pcie_stats->poisonedTlpStatusCount));
-	printf("  Dlink Protocol Error Status Counter           %016"PRIu64"\n",
+	printf("  Dlink Protocol Error Status Counter           %20"PRIu64"\n",
 			le64_to_cpu(pcie_stats->dLinkPrtclErrorStatusCount));
-	printf("  Advisory Non Fatal Error Status Counter       %016"PRIu64"\n",
+	printf("  Advisory Non Fatal Error Status Counter       %20"PRIu64"\n",
 			le64_to_cpu(pcie_stats->advsryNFatalErrStatusCount));
-	printf("  Replay Timer TO Status Counter                %016"PRIu64"\n",
+	printf("  Replay Timer TO Status Counter                %20"PRIu64"\n",
 			le64_to_cpu(pcie_stats->replayTimerToStatusCount));
-	printf("  Replay Number Rollover Status Counter         %016"PRIu64"\n",
+	printf("  Replay Number Rollover Status Counter         %20"PRIu64"\n",
 			le64_to_cpu(pcie_stats->replayNumRolloverStCount));
-	printf("  Bad DLLP Status Counter                       %016"PRIu64"\n",
+	printf("  Bad DLLP Status Counter                       %20"PRIu64"\n",
 			le64_to_cpu(pcie_stats->badDllpStatusCount));
-	printf("  Bad TLP Status Counter                        %016"PRIu64"\n",
+	printf("  Bad TLP Status Counter                        %20"PRIu64"\n",
 			le64_to_cpu(pcie_stats->badTlpStatusCount));
-	printf("  Receiver Error Status Counter                 %016"PRIu64"\n",
+	printf("  Receiver Error Status Counter                 %20"PRIu64"\n",
 			le64_to_cpu(pcie_stats->receiverErrStatusCount));
 
 }
@@ -7198,10 +7198,9 @@ static int wdc_do_vs_pcie_stats(int fd,
 	struct nvme_admin_cmd admin_cmd;
 	int pcie_stats_size = sizeof(struct wdc_vs_pcie_stats);
 
-
 	memset(&admin_cmd, 0, sizeof (struct nvme_admin_cmd));
 	admin_cmd.opcode = WDC_NVME_PCIE_STATS_OPCODE;
-	admin_cmd.addr = (__u64)pcieStatsPtr;
+	admin_cmd.addr = (__u64)(uintptr_t)pcieStatsPtr;
 	admin_cmd.data_len = pcie_stats_size;
 
 	ret = nvme_submit_admin_passthru(fd, &admin_cmd);
@@ -7250,6 +7249,8 @@ static int wdc_vs_pcie_stats(int argc, char **argv, struct command *command,
 		ret = -1;
 		goto out;
 	}
+
+	memset((void *)pcieStatsPtr, 0, pcie_stats_size);
 
 	capabilities = wdc_get_drive_capabilities(fd);
 
