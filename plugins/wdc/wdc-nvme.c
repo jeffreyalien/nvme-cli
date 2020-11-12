@@ -118,6 +118,7 @@
 #define WDC_DRIVE_CAP_FW_ACTIVATE_HISTORY_C2        0x0000000001000000
 #define WDC_DRIVE_CAP_VU_FID_CLEAR_FW_ACT_HISTORY	0x0000000002000000
 #define WDC_DRIVE_CAP_PCIE_STATS			0x0000000004000000
+#define WDC_DRIVE_CAP_CLOUD_SSD_VERSION		0x0000000008000000
 
 #define WDC_DRIVE_CAP_DRIVE_ESSENTIALS      0x0000000100000000
 #define WDC_DRIVE_CAP_DUI_DATA				0x0000000200000000
@@ -1210,7 +1211,8 @@ static __u64 wdc_get_drive_capabilities(int fd) {
 					WDC_DRIVE_CAP_DRIVE_STATUS | WDC_DRIVE_CAP_CLEAR_ASSERT |
 					WDC_DRIVE_CAP_RESIZE | WDC_DRIVE_CAP_CLEAR_PCIE |
 					WDC_DRIVE_CAP_FW_ACTIVATE_HISTORY | WDC_DRVIE_CAP_DISABLE_CTLR_TELE_LOG |
-					WDC_DRIVE_CAP_REASON_ID | WDC_DRIVE_CAP_LOG_PAGE_DIR | WDC_DRIVE_CAP_INFO);
+					WDC_DRIVE_CAP_REASON_ID | WDC_DRIVE_CAP_LOG_PAGE_DIR | WDC_DRIVE_CAP_INFO |
+					WDC_DRIVE_CAP_CLOUD_SSD_VERSION);
 
 			/* verify the 0xCA log page is supported */
 			if (wdc_nvme_check_supported_log_page(fd, WDC_NVME_GET_DEVICE_INFO_LOG_OPCODE) == true)
@@ -1254,7 +1256,8 @@ static __u64 wdc_get_drive_capabilities(int fd) {
 					WDC_DRIVE_CAP_RESIZE | WDC_DRIVE_CAP_CLEAR_PCIE |
 					WDC_DRIVE_CAP_FW_ACTIVATE_HISTORY | WDC_DRIVE_CAP_CLEAR_FW_ACT_HISTORY |
 					WDC_DRVIE_CAP_DISABLE_CTLR_TELE_LOG | WDC_DRIVE_CAP_REASON_ID |
-					WDC_DRIVE_CAP_LOG_PAGE_DIR | WDC_DRIVE_CAP_INFO);
+					WDC_DRIVE_CAP_LOG_PAGE_DIR | WDC_DRIVE_CAP_INFO |
+					WDC_DRIVE_CAP_CLOUD_SSD_VERSION);
 
 			/* verify the 0xCA log page is supported */
 			if (wdc_nvme_check_supported_log_page(fd, WDC_NVME_GET_DEVICE_INFO_LOG_OPCODE) == true)
@@ -7029,38 +7032,37 @@ static void wdc_print_nand_stats_json(__u16 version, void *data)
 static void wdc_print_pcie_stats_normal(struct wdc_vs_pcie_stats *pcie_stats)
 {
 	printf("  PCIE Statistics :- \n");
-	printf("  Unsupported Request Error Counter     	 %"PRIu64"\n",
+	printf("  Unsupported Request Error Counter             %016"PRIu64"\n",
 			le64_to_cpu(pcie_stats->unsupportedRequestErrorCount));
-	printf("  ECRC Error Status Counter            		 %"PRIu64"\n",
+	printf("  ECRC Error Status Counter                     %016"PRIu64"\n",
 			le64_to_cpu(pcie_stats->ecrcErrorStatusCount));
-	printf("  Malformed TLP Status Counter             	 %"PRIu64"\n",
+	printf("  Malformed TLP Status Counter                  %016"PRIu64"\n",
 			le64_to_cpu(pcie_stats->malformedTlpStatusCount));
-
-	printf("  Receiver Overflow Status Counter           %"PRIu64"\n",
+	printf("  Receiver Overflow Status Counter              %016"PRIu64"\n",
 			le64_to_cpu(pcie_stats->receiverOverflowStatusCount));
-	printf("  Unexpected Completion Status Counter       %"PRIu64"\n",
+	printf("  Unexpected Completion Status Counter          %016"PRIu64"\n",
 			le64_to_cpu(pcie_stats->unexpectedCmpltnStatusCount));
-	printf("  Complete Abort Status Counter          	 %"PRIu64"\n",
+	printf("  Complete Abort Status Counter                 %016"PRIu64"\n",
 			le64_to_cpu(pcie_stats->completeAbortStatusCount));
-	printf("  Completion Timeout Status Counter     	 %"PRIu64"\n",
+	printf("  Completion Timeout Status Counter             %016"PRIu64"\n",
 			le64_to_cpu(pcie_stats->cmpltnTimoutStatusCount));
-	printf("  Flow Control Error Status Counter     	 %"PRIu64"\n",
+	printf("  Flow Control Error Status Counter             %016"PRIu64"\n",
 			le64_to_cpu(pcie_stats->flowControlErrorStatusCount));
-	printf("  Poisoned TLP Status Counter             	 %"PRIu64"\n",
+	printf("  Poisoned TLP Status Counter                   %016"PRIu64"\n",
 			le64_to_cpu(pcie_stats->poisonedTlpStatusCount));
-	printf("  Dlink Protocol Error Status Counter     	 %"PRIu64"\n",
+	printf("  Dlink Protocol Error Status Counter           %016"PRIu64"\n",
 			le64_to_cpu(pcie_stats->dLinkPrtclErrorStatusCount));
-	printf("  Advisory Non Fatal Error Status Counter    %"PRIu64"\n",
+	printf("  Advisory Non Fatal Error Status Counter       %016"PRIu64"\n",
 			le64_to_cpu(pcie_stats->advsryNFatalErrStatusCount));
-	printf("  Replay Timer TO Status Counter          	 %"PRIu64"\n",
+	printf("  Replay Timer TO Status Counter                %016"PRIu64"\n",
 			le64_to_cpu(pcie_stats->replayTimerToStatusCount));
-	printf("  Replay Number Rollover Status Counter  	 %"PRIu64"\n",
+	printf("  Replay Number Rollover Status Counter         %016"PRIu64"\n",
 			le64_to_cpu(pcie_stats->replayNumRolloverStCount));
-	printf("  Bad DLLP Status Counter            		 %"PRIu64"\n",
+	printf("  Bad DLLP Status Counter                       %016"PRIu64"\n",
 			le64_to_cpu(pcie_stats->badDllpStatusCount));
-	printf("  Bad TLP Status Counter                 	 %"PRIu64"\n",
+	printf("  Bad TLP Status Counter                        %016"PRIu64"\n",
 			le64_to_cpu(pcie_stats->badTlpStatusCount));
-	printf("  Receiver Error Status Counter         	 %"PRIu64"\n",
+	printf("  Receiver Error Status Counter                 %016"PRIu64"\n",
 			le64_to_cpu(pcie_stats->receiverErrStatusCount));
 
 }
@@ -7193,7 +7195,7 @@ static int wdc_vs_nand_stats(int argc, char **argv, struct command *command,
 }
 
 static int wdc_do_vs_pcie_stats(int fd,
-		                        struct wdc_vs_pcie_stats *pcieStatsPtr)
+		struct wdc_vs_pcie_stats *pcieStatsPtr)
 {
 	int ret;
 	struct nvme_admin_cmd admin_cmd;
@@ -7381,6 +7383,7 @@ static int wdc_vs_temperature_stats(int argc, char **argv,
 	fprintf(stderr, "NVMe Status:%s(%x)\n", nvme_status_to_string(ret), ret);
 	return ret;
 }
+
 static int wdc_capabilities(int argc, char **argv, 
         struct command *command, struct plugin *plugin) 
 {
@@ -7456,7 +7459,39 @@ static int wdc_capabilities(int argc, char **argv,
             capabilities & WDC_DRIVE_CAP_TEMP_STATS ? "Supported" : "Not Supported");
     printf("vs-pcie-stats                 : %s\n",
             capabilities & WDC_DRIVE_CAP_PCIE_STATS ? "Supported" : "Not Supported");
+    printf("cloud-SSD-plugin-version      : %s\n",
+            capabilities & WDC_DRIVE_CAP_CLOUD_SSD_VERSION ? "Supported" : "Not Supported");
     printf("capabilities                  : Supported\n");
+    return 0;
+}
+
+static int wdc_cloud_ssd_plugin_version(int argc, char **argv,
+        struct command *command, struct plugin *plugin)
+{
+    const char *desc = "Get Cloud SSD Plugin Version command.";
+    uint64_t capabilities = 0;
+    int fd;
+
+    OPT_ARGS(opts) =
+    {
+        OPT_END()
+    };
+
+    fd = parse_and_open(argc, argv, desc, opts);
+    if (fd < 0)
+        return fd;
+
+    /* get capabilities */
+    wdc_check_device(fd);
+    capabilities = wdc_get_drive_capabilities(fd);
+
+	if ((capabilities & WDC_DRIVE_CAP_CLOUD_SSD_VERSION) == WDC_DRIVE_CAP_CLOUD_SSD_VERSION) {
+	    /* print command and supported status */
+	    printf("WDC Cloud SSD Plugin Version: 1.0\n");
+	} else {
+		fprintf(stderr, "ERROR : WDC: unsupported device for this command\n");
+	}
+
     return 0;
 }
 
