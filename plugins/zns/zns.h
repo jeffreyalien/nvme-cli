@@ -19,6 +19,7 @@ PLUGIN(NAME("zns", "Zoned Namespace Command Set", NVME_VERSION),
 		ENTRY("reset-zone", "Resets one or more zones", reset_zone)
 		ENTRY("offline-zone", "Offlines one or more zones", offline_zone)
 		ENTRY("set-zone-desc", "Attaches zone descriptor extension data", set_zone_desc)
+		ENTRY("commit-zone", "Commits one or more zones", commit_zone)
 		ENTRY("zone-append", "Writes data and metadata (if applicable), appended to the end of the requested zone", zone_append)
 		ENTRY("changed-zone-list", "Retrieves the changed zone list log", changed_zone_list)
 	)

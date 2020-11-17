@@ -8,7 +8,7 @@ nvme-zns-close-zone - Closes one or all zones
 SYNOPSIS
 --------
 [verse]
-'nvme zns close-zone nvme zns id-ctrl' <device> [--namespace-id=<NUM> | -n <NUM>]
+'nvme zns close-zone' <device> [--namespace-id=<NUM> | -n <NUM>]
 						[--start-lba=<LBA> | -s <LBA>]
 						[--select-all | -a]
 
