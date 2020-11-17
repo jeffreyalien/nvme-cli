@@ -2936,6 +2936,10 @@ void json_nvme_zns_id_ns(struct nvme_zns_id_ns *ns,
 	json_object_add_value_int(root, "mor", le32_to_cpu(ns->mor));
 	json_object_add_value_int(root, "rrl", le32_to_cpu(ns->rrl));
 	json_object_add_value_int(root, "frl", le32_to_cpu(ns->frl));
+	json_object_add_value_int(root, "numzrwa", le32_to_cpu(ns->numzrwa));
+	json_object_add_value_int(root, "czrwag", le16_to_cpu(ns->czrwag));
+	json_object_add_value_int(root, "zrwas", le16_to_cpu(ns->zrwas));
+	json_object_add_value_int(root, "zrwacap", le16_to_cpu(ns->zrwacap));
 
 	lbafs = json_create_array();
 	json_object_add_value_array(root, "lbafe", lbafs);
@@ -3038,6 +3042,26 @@ void nvme_show_zns_id_ns(struct nvme_zns_id_ns *ns,
 		printf("frl     : Not Reported\n");
 	else
 		printf("frl     : %d\n", le32_to_cpu(ns->frl));
+
+	if (!le32_to_cpu(ns->numzrwa) && human)
+		printf("numzrwa : Not Reported\n");
+	else
+		printf("numzrwa : %d\n", le32_to_cpu(ns->numzrwa));
+
+	if (!le16_to_cpu(ns->czrwag) && human)
+		printf("czrwag  : Not Reported\n");
+	else
+		printf("czrwag  : %d\n", le16_to_cpu(ns->czrwag));
+
+	if (!le16_to_cpu(ns->zrwas) && human)
+		printf("zrwas   : Not Reported\n");
+	else
+		printf("zrwas   : %d\n", le16_to_cpu(ns->zrwas));
+
+	if (!le16_to_cpu(ns->zrwacap) && human)
+		printf("zrwacap : Not Reported\n");
+	else
+		printf("zrwacap : %d\n", le16_to_cpu(ns->zrwacap));
 
 	for (i = 0; i <= id_ns->nlbaf; i++){
 		if (human)

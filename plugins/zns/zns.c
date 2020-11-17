@@ -130,11 +130,11 @@ close_fd:
 }
 
 static int __zns_mgmt_send(int fd, __u32 namespace_id, __u64 zslba,
-	bool select_all, enum nvme_zns_send_action zsa, __u32 data_len, void *buf)
+	bool select_all, __u32 zrwa_alloc, enum nvme_zns_send_action zsa, __u32 data_len, void *buf)
 {
 	int err;
 
-	err = nvme_zns_mgmt_send(fd, namespace_id, zslba, select_all, zsa,
+	err = nvme_zns_mgmt_send(fd, namespace_id, zslba, select_all, zrwa_alloc, zsa,
 			data_len, buf);
 	close(fd);
 	return err;
@@ -143,8 +143,10 @@ static int __zns_mgmt_send(int fd, __u32 namespace_id, __u64 zslba,
 static int zns_mgmt_send(int argc, char **argv, struct command *cmd, struct plugin *plugin,
 	const char *desc, enum nvme_zns_send_action zsa)
 {
+	const char *namespace_id = "identifier of desired zoned namespace";
 	const char *zslba = "starting LBA of the zone for this command";
 	const char *select_all = "send command to all zones";
+	const char *zrwa_alloc = "allocate a random-write area to this zone (only valid with open-zone action)";
 
 	int err, fd;
 	char *command;
@@ -153,6 +155,7 @@ static int zns_mgmt_send(int argc, char **argv, struct command *cmd, struct plug
 		__u64	zslba;
 		int	namespace_id;
 		bool	select_all;
+		__u32	zrwa_alloc;
 	};
 
 	struct config cfg = {
@@ -162,6 +165,7 @@ static int zns_mgmt_send(int argc, char **argv, struct command *cmd, struct plug
 		OPT_UINT("namespace-id", 'n', &cfg.namespace_id,  namespace_id),
 		OPT_SUFFIX("start-lba",  's', &cfg.zslba,         zslba),
 		OPT_FLAG("select-all",   'a', &cfg.select_all,    select_all),
+		OPT_UINT("zrwa_alloc",   'r', &cfg.zrwa_alloc,    zrwa_alloc),
 		OPT_END()
 	};
 
@@ -182,7 +186,7 @@ static int zns_mgmt_send(int argc, char **argv, struct command *cmd, struct plug
 	}
 
 	err = __zns_mgmt_send(fd, cfg.namespace_id, cfg.zslba,
-		cfg.select_all, zsa, 0, NULL);
+		cfg.select_all, cfg.zrwa_alloc,  zsa, 0, NULL);
 	if (!err)
 		printf("%s: Success, action:%d zone:%"PRIx64" nsid:%d\n", command,
 			zsa, (uint64_t)cfg.zslba, cfg.namespace_id);
@@ -234,6 +238,7 @@ static int zone_mgmt_send(int argc, char **argv, struct command *cmd, struct plu
 	const char *zslba = "starting LBA of the zone for this command";
 	const char *select_all = "send command to all zones";
 	const char *zsa = "zone send action";
+	const char *zrwa_alloc = "allocate a random-write area to this zone (only valid with open-zone action)";
 	const char *data_len = "buffer length if data required";
 	const char *data = "optional file for data (default stdin)";
 
@@ -245,6 +250,7 @@ static int zone_mgmt_send(int argc, char **argv, struct command *cmd, struct plu
 		int	namespace_id;
 		bool	select_all;
 		__u8	zsa;
+		__u32 zrwa_alloc;
 		int   data_len;
 		char   *file;
 	};
@@ -253,10 +259,11 @@ static int zone_mgmt_send(int argc, char **argv, struct command *cmd, struct plu
 	};
 
 	OPT_ARGS(opts) = {
-		OPT_UINT("namespace-id", 'n', &cfg.namespace_id,  namespace_id),
-		OPT_SUFFIX("start-lba",  's', &cfg.zslba,         zslba),
-		OPT_FLAG("select-all",   'a', &cfg.select_all,    select_all),
-		OPT_BYTE("zsa",          'z', &cfg.zsa,           zsa),
+		OPT_UINT("namespace-id", 'n', &cfg.namespace_id, namespace_id),
+		OPT_SUFFIX("start-lba",  's', &cfg.zslba,        zslba),
+		OPT_FLAG("select-all",   'a', &cfg.select_all,   select_all),
+		OPT_BYTE("zsa",          'z', &cfg.zsa,          zsa),
+		OPT_UINT("zrwa_alloc",   'r', &cfg.zrwa_alloc,   zrwa_alloc),
 		OPT_UINT("data-len",     'l', &cfg.data_len,     data_len),
 		OPT_FILE("data",         'd', &cfg.file,         data),
 		OPT_END()
@@ -321,7 +328,7 @@ static int zone_mgmt_send(int argc, char **argv, struct command *cmd, struct plu
 	}
 
 	err = __zns_mgmt_send(fd, cfg.namespace_id, cfg.zslba, cfg.select_all,
-			cfg.zsa, cfg.data_len, buf);
+			cfg.zrwa_alloc, cfg.zsa, cfg.data_len, buf);
 	if (!err)
 		printf("zone-mgmt-send: Success, action:%d zone:%"PRIx64" nsid:%d\n",
 			cfg.zsa, (uint64_t)cfg.zslba, cfg.namespace_id);
@@ -372,6 +379,13 @@ static int reset_zone(int argc, char **argv, struct command *cmd, struct plugin 
 static int offline_zone(int argc, char **argv, struct command *cmd, struct plugin *plugin)
 {
 	const char *desc = "Offline zones\n";
+
+	return zns_mgmt_send(argc, argv, cmd, plugin, desc, NVME_ZNS_ZSA_OFFLINE);
+}
+
+static int commit_zone(int argc, char **argv, struct command *cmd, struct plugin *plugin)
+{
+	const char *desc = "Commit zones\n";
 
 	return zns_mgmt_send(argc, argv, cmd, plugin, desc, NVME_ZNS_ZSA_OFFLINE);
 }
@@ -446,7 +460,7 @@ static int set_zone_desc(int argc, char **argv, struct command *cmd, struct plug
 	}
 
 	err = __zns_mgmt_send(fd, cfg.namespace_id, cfg.zslba, 0,
-		NVME_ZNS_ZSA_SET_DESC_EXT, data_len, buf);
+		0, NVME_ZNS_ZSA_SET_DESC_EXT, data_len, buf);
 	if (!err)
 		printf("set-zone-desc: Success, zone:%"PRIx64" nsid:%d\n",
 			(uint64_t)cfg.zslba, cfg.namespace_id);
