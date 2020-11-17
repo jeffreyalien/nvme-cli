@@ -448,6 +448,15 @@ enum {
 };
 
 enum {
+	NVME_CSI_NVM				= 0,
+	NVME_CSI_ZNS				= 2,
+};
+
+enum nvme_zone_rwa_cap {
+	NVME_ZONE_RWA_EXPCOMSUP		= 1 << 0,
+};
+
+enum {
 	NVME_DIR_IDENTIFY		= 0x00,
 	NVME_DIR_STREAMS		= 0x01,
 	NVME_DIR_SND_ID_OP_ENABLE	= 0x01,
@@ -1439,12 +1448,13 @@ enum {
 	/*
 	 * I/O Command Set Specific - Zoned Namespace commands:
 	 */
+	NVME_SC_ZONE_ZRWA_ALLOC_FAIL	= 0x1B7,
 	NVME_SC_ZONE_BOUNDARY_ERROR		= 0x1B8,
 	NVME_SC_ZONE_IS_FULL			= 0x1B9,
 	NVME_SC_ZONE_IS_READ_ONLY		= 0x1BA,
 	NVME_SC_ZONE_IS_OFFLINE			= 0x1BB,
 	NVME_SC_ZONE_INVALID_WRITE		= 0x1BC,
-	NVME_SC_TOO_MANY_ACTIVE_ZONES		= 0x1BD,
+	NVME_SC_TOO_MANY_ACTIVE_ZONES	= 0x1BD,
 	NVME_SC_TOO_MANY_OPEN_ZONES		= 0x1BE,
 	NVME_SC_ZONE_INVALID_STATE_TRANSITION	= 0x1BF,
 
@@ -1469,6 +1479,27 @@ enum {
 
 	NVME_SC_CRD			= 0x1800,
 	NVME_SC_DNR			= 0x4000,
+};
+
+struct nvme_zone_report_header {
+	__u64           nr_zones;
+	__u8            __res[56];
+};
+
+struct nvme_zone_log {
+        __u8            zone_type;
+        __u8            zone_state;
+        __u8            zone_attrs;
+        __u8            __res[5];
+        __le64          capacity;
+        __le64          slba;
+        __le64          wp;
+        __u8            __res2[32];
+};
+
+enum nvme_zone_management_action_send_flags {
+	NVME_ZNS_MGMT_SEND_SELECT_ALL	= 8,
+	NVME_ZNS_MGMT_SEND_ZRWAA		= 9,
 };
 
 #define NVME_VS(major, minor, tertiary) \
@@ -1508,11 +1539,15 @@ struct nvme_zns_id_ns {
 	__le32			mor;
 	__le32			rrl;
 	__le32			frl;
-	__u8			rsvd20[2796];
-	struct nvme_zns_lbafe	lbafe[16];
-	__u8			rsvd3072[768];
+	__le32			numzrwa;
+	__le16			czrwag;
+	__le16			zrwas;
+	__le16			zrwacap;
+	__u8			rsvd30[2786];
+ 	struct nvme_zns_lbafe	lbafe[16];
+ 	__u8			rsvd3072[768];
 	__u8			vs[256];
-};
+} __attribute__((packed));
 
 /**
  * struct nvme_zns_id_ctrl -
@@ -1550,6 +1585,7 @@ enum nvme_zns_za {
 	NVME_ZNS_ZA_ZFC			= 1 << 0,
 	NVME_ZNS_ZA_FZR			= 1 << 1,
 	NVME_ZNS_ZA_RZR			= 1 << 2,
+	NVME_ZNS_ZA_RWA  		= 1 << 3,
 	NVME_ZNS_ZA_ZDEV		= 1 << 7,
 };
 
@@ -1594,8 +1630,9 @@ enum nvme_zns_send_action {
 	NVME_ZNS_ZSA_FINISH		= 0x2,
 	NVME_ZNS_ZSA_OPEN		= 0x3,
 	NVME_ZNS_ZSA_RESET		= 0x4,
-	NVME_ZNS_ZSA_OFFLINE		= 0x5,
+	NVME_ZNS_ZSA_OFFLINE	= 0x5,
 	NVME_ZNS_ZSA_SET_DESC_EXT	= 0x10,
+	NVME_ZNS_ZSA_COMMIT     = 0x11,
 };
 
 enum nvme_zns_recv_action {

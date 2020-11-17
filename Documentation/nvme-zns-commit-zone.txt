@@ -1,21 +1,21 @@
-nvme-zns-offline-zone(1)
+nvme-zns-commit-zone(1)
 ========================
 
 NAME
 ----
-nvme-zns-offline-zone - Offlines one or all zones
+nvme-zns-commit-zone - commits one or all zones
 
 SYNOPSIS
 --------
 [verse]
-'nvme zns offline-zone' <device> [--namespace-id=<NUM> | -n <NUM>]
+'nvme zns commit-zone' <device> [--namespace-id=<NUM> | -n <NUM>]
 						[--start-lba=<LBA> | -s <LBA>]
 						[--select-all | -a]
 
 DESCRIPTION
 -----------
 For the NVMe device given, issues the Zone Management Send command with the
-"Offline Zone" action. This will transition the zone to the offlined state.
+"Commit Zone" action. This will transition the zone to the committed state.
 
 The <device> parameter is mandatory and may be either the NVMe character
 device (ex: /dev/nvme0), or a namespace block device (ex: /dev/nvme0n1).
@@ -30,7 +30,7 @@ OPTIONS
 
 -s <lba>::
 --start-lba=<lba>::
-	The starting LBA of the zone to offline. 
+	The starting LBA of the zone to committed. 
 
 -a::
 --select-all::
@@ -38,10 +38,10 @@ OPTIONS
 
 EXAMPLES
 --------
-* Offline all zones on namespace 1:
+* commit all zones on namespace 1:
 +
 ------------
-# nvme zns offline-zone /dev/nvme0 -a -n 1
+# nvme zns commit-zone /dev/nvme0 -a -n 1
 ------------
 
 NVME
