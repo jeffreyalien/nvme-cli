@@ -118,6 +118,7 @@
 #define WDC_DRIVE_CAP_FW_ACTIVATE_HISTORY_C2        0x0000000001000000
 #define WDC_DRIVE_CAP_VU_FID_CLEAR_FW_ACT_HISTORY	0x0000000002000000
 #define WDC_DRIVE_CAP_PCIE_STATS			0x0000000004000000
+#define WDC_DRIVE_CAP_INFO_2				0x0000000008000000
 
 #define WDC_DRIVE_CAP_DRIVE_ESSENTIALS      0x0000000100000000
 #define WDC_DRIVE_CAP_DUI_DATA				0x0000000200000000
@@ -889,6 +890,8 @@ struct wdc_vs_pcie_stats
     __le64      badDllpStatusCount;
     __le64      badTlpStatusCount;
     __le64      receiverErrStatusCount;
+    __u8        reserved1[384];
+
 };
 
 struct wdc_fw_act_history_log_hdr {
@@ -1290,7 +1293,7 @@ static __u64 wdc_get_drive_capabilities(int fd) {
 			break;
 		case WDC_NVME_SN730A_DEV_ID:
 			capabilities =  WDC_DRIVE_CAP_DUI | WDC_DRIVE_CAP_NAND_STATS | 
-					WDC_DRIVE_CAP_INFO | WDC_DRIVE_CAP_TEMP_STATS | WDC_DRIVE_CAP_VUC_CLEAR_PCIE |
+					WDC_DRIVE_CAP_INFO_2 | WDC_DRIVE_CAP_TEMP_STATS | WDC_DRIVE_CAP_VUC_CLEAR_PCIE |
 					WDC_DRIVE_CAP_PCIE_STATS;
 			break;
 		case WDC_NVME_SN340_DEV_ID:
@@ -7219,6 +7222,7 @@ static int wdc_vs_pcie_stats(int argc, char **argv, struct command *command,
 	int fmt = -1;
 	struct wdc_vs_pcie_stats *pcieStatsPtr = NULL;
 	int pcie_stats_size = sizeof(struct wdc_vs_pcie_stats);
+	bool huge;
 
 	struct config {
 		char *output_format;
@@ -7244,8 +7248,9 @@ static int wdc_vs_pcie_stats(int argc, char **argv, struct command *command,
 		goto out;
 	}
 
-	if ((pcieStatsPtr = (struct wdc_vs_pcie_stats *)calloc(pcie_stats_size, sizeof(uint8_t))) == NULL) {
-		fprintf(stderr, "ERROR : WDC : calloc : %s\n", strerror(errno));
+	pcieStatsPtr = nvme_alloc(pcie_stats_size, &huge);
+	if (pcieStatsPtr == NULL) {
+		fprintf(stderr, "ERROR : WDC : PCIE Stats alloc : %s\n", strerror(errno));
 		ret = -1;
 		goto out;
 	}
@@ -7262,7 +7267,6 @@ static int wdc_vs_pcie_stats(int argc, char **argv, struct command *command,
 		if (ret)
 			fprintf(stderr, "ERROR : WDC : Failure reading PCIE statistics, ret = 0x%x\n", ret);
 		else {
-
 			/* parse the data */
 			switch (fmt) {
 			case NORMAL:
@@ -7275,7 +7279,8 @@ static int wdc_vs_pcie_stats(int argc, char **argv, struct command *command,
 		}
 	}
 
-    free(pcieStatsPtr);
+	nvme_free(pcieStatsPtr, huge);
+
 out:
 	return ret;
 }
@@ -7286,9 +7291,12 @@ static int wdc_vs_drive_info(int argc, char **argv,
 	const char *desc = "Send a vs-drive-info command.";
 	uint64_t capabilities = 0;
 	int fd, ret;
-	__le32 result;
+	__le32 result = 0;
 	__u16 size;
 	double rev;
+	struct nvme_id_ctrl ctrl;
+	char vsData[32] = {0};
+	char major_rev = 0, minor_rev = 0;
 
 	OPT_ARGS(opts) = {
 		OPT_END()
@@ -7302,17 +7310,38 @@ static int wdc_vs_drive_info(int argc, char **argv,
 	capabilities = wdc_get_drive_capabilities(fd);
 	if ((capabilities & WDC_DRIVE_CAP_INFO) == WDC_DRIVE_CAP_INFO) {
 		ret = wdc_do_drive_info(fd, &result);
-	} else {
+
+		if (!ret) {
+			size = (__u16)((cpu_to_le32(result) & 0xffff0000) >> 16);
+			rev = (double)(cpu_to_le32(result) & 0x0000ffff);
+
+			printf("Drive HW Revison:  %4.1f\n", (.1 * rev));
+			printf("FTL Unit Size:      0x%x KB\n", size);
+		} else {
+			fprintf(stderr, "ERROR : WDC %s: Get Drive Info failed\n", __func__);
+		}
+	}
+	else if ((capabilities & WDC_DRIVE_CAP_INFO_2) == WDC_DRIVE_CAP_INFO_2) {
+		/* get the vendor specific customer serial num, major and minor rev */
+		ret = nvme_identify_ctrl(fd, &ctrl);
+
+		if (!ret) {
+			memcpy(vsData, &ctrl.vs[0], 32);
+
+			major_rev = vsData[20];
+			minor_rev = vsData[21];
+
+			printf("Customer SN:        %-.*s\n", 14, &vsData[0]);
+			printf("HW Major/Minor Rev: %d/%d \n", major_rev, minor_rev);
+			printf("Identify Controller VS data binary: \n");
+			d((__u8 *)&vsData[0], 32, 16, 1);
+		} else {
+			fprintf(stderr, "ERROR : WDC %s: Identify Controller failed\n", __func__);
+		}
+	}
+	else {
 		fprintf(stderr, "ERROR : WDC: unsupported device for this command\n");
 		ret = -1;
-	}
-
-	if (!ret) {
-		size = (__u16)((cpu_to_le32(result) & 0xffff0000) >> 16);
-		rev = (double)(cpu_to_le32(result) & 0x0000ffff);
-
-		printf("Drive HW Revison: %4.1f\n", (.1 * rev));
-		printf("FTL Unit Size:     0x%x KB\n", size);
 	}
 
 	fprintf(stderr, "NVMe Status:%s(%x)\n", nvme_status_to_string(ret), ret);
@@ -7452,7 +7481,7 @@ static int wdc_capabilities(int argc, char **argv,
     printf("namespace-resize              : %s\n", 
             capabilities & WDC_DRIVE_CAP_NS_RESIZE ? "Supported" : "Not Supported");
     printf("vs-drive-info                 : %s\n", 
-            capabilities & WDC_DRIVE_CAP_INFO ? "Supported" : "Not Supported");
+            capabilities & (WDC_DRIVE_CAP_INFO | WDC_DRIVE_CAP_INFO_2) ? "Supported" : "Not Supported");
     printf("vs-temperature-stats          : %s\n", 
             capabilities & WDC_DRIVE_CAP_TEMP_STATS ? "Supported" : "Not Supported");
     printf("vs-pcie-stats                 : %s\n",
