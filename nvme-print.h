@@ -37,6 +37,24 @@ void nvme_show_endurance_log(struct nvme_endurance_group_log *endurance_log,
 	__u16 group_id, const char *devname, enum nvme_print_flags flags);
 void nvme_show_sanitize_log(struct nvme_sanitize_log_page *sanitize,
 	const char *devname, enum nvme_print_flags flags);
+void json_predictable_latency_per_nvmset(
+	struct nvme_predlat_per_nvmset_log_page *plpns_log,
+	__u16 nvmset_id);
+void nvme_show_predictable_latency_per_nvmset(
+	struct nvme_predlat_per_nvmset_log_page *plpns_log,
+	__u16 nvmset_id, const char *devname, enum nvme_print_flags flags);
+void json_predictable_latency_event_agg_log(
+	struct nvme_predlat_event_agg_log_page *pea_log,
+	__u64 log_entries);
+void nvme_show_predictable_latency_event_agg_log(
+	struct nvme_predlat_event_agg_log_page *pea_log,
+	__u64 log_entries, __u32 size, const char *devname,
+	enum nvme_print_flags flags);
+void json_persistent_event_log(void *pevent_log_info,
+	__u32 size, enum nvme_print_flags flags);
+void nvme_show_persistent_event_log(void *pevent_log_info,
+	__u8 action, __u32 size, const char *devname,
+	enum nvme_print_flags flags);
 void nvme_show_ctrl_registers(void *bar, bool fabrics, enum nvme_print_flags flags);
 void nvme_show_single_property(int offset, uint64_t prop, int human);
 void nvme_show_id_ns_descs(void *data, unsigned nsid, enum nvme_print_flags flags);

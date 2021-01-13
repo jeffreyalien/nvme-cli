@@ -61,16 +61,16 @@ int nvme_flush(int fd, __u32 nsid);
 
 int nvme_dsm(int fd, __u32 nsid, __u32 cdw11, struct nvme_dsm_range *dsm,
 	     __u16 nr_ranges);
-struct nvme_dsm_range *nvme_setup_dsm_range(__u32 *ctx_attrs,
-					    __u32 *llbas, __u64 *slbas,
+struct nvme_dsm_range *nvme_setup_dsm_range(int *ctx_attrs, int *llbas,
+					    unsigned long long *slbas,
 					    __u16 nr_ranges);
 
 int nvme_copy(int fd, __u32 nsid, struct nvme_copy_range *copy, __u64 sdlba,
 		__u16 nr, __u8 prinfor, __u8 prinfow, __u8 dtype, __u16 dspec,
 		__u8 format, int lr, int fua, __u32 ilbrt, __u16 lbatm,
 		__u16 lbat);
-struct nvme_copy_range *nvme_setup_copy_range(__u16 *nlbs, __u64 *slbas,
-		__u32 *eilbrts, __u16 *elbatms, __u16 *elbats, __u16 nr);
+struct nvme_copy_range *nvme_setup_copy_range(int *nlbs, unsigned long long *slbas,
+		int *eilbrts, int *elbatms, int *elbats, __u16 nr);
 
 int nvme_resv_acquire(int fd, __u32 nsid, __u8 rtype, __u8 racqa,
 		      bool iekey, __u64 crkey, __u64 nrkey);
@@ -97,7 +97,7 @@ int nvme_zns_identify_ctrl(int fd, void *data);
 int nvme_zns_identify_ns(int fd, __u32 nsid, void *data);
 int nvme_identify_iocs(int fd, __u16 cntid, void *data);
 int nvme_get_log(int fd, __u32 nsid, __u8 log_id, bool rae,
-		 __u32 data_len, void *data);
+		 __u8 lsp, __u32 data_len, void *data);
 int nvme_get_log14(int fd, __u32 nsid, __u8 log_id, __u8 lsp, __u64 lpo,
 		   __u16 group_id, bool rae, __u8 uuid_ix,
 		   __u32 data_len, void *data);
@@ -115,6 +115,12 @@ int nvme_ana_log(int fd, void *ana_log, size_t ana_log_len, int rgo);
 int nvme_effects_log(int fd, struct nvme_effects_log_page *effects_log);
 int nvme_discovery_log(int fd, struct nvmf_disc_rsp_page_hdr *log, __u32 size);
 int nvme_sanitize_log(int fd, struct nvme_sanitize_log_page *sanitize_log);
+int nvme_predictable_latency_per_nvmset_log(int fd,
+		__u16 nvmset_id, struct nvme_predlat_per_nvmset_log_page *plpns_log);
+int nvme_predictable_latency_event_agg_log(int fd, void *pea_log,
+		bool rae, __u32 size);
+int nvme_persistent_event_log(int fd, __u8 action, __u32 size,
+		void *pevent_log_info);
 int nvme_endurance_log(int fd, __u16 group_id,
 		       struct nvme_endurance_group_log *endurance_log);
 

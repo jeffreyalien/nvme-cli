@@ -618,8 +618,11 @@ static int report_zones(int argc, char **argv, struct command *cmd, struct plugi
 
 		err = nvme_zns_report_zones(fd, cfg.namespace_id, 0,
 			0, cfg.state, 0, sizeof(r), &r);
-		if (err) {
+		if (err > 0) {
 			nvme_show_status(err);
+			goto close_fd;
+		} else if (err < 0) {
+			perror("zns report-zones");
 			goto close_fd;
 		}
 		cfg.num_descs = le64_to_cpu(r.nr_zones);
@@ -891,7 +894,7 @@ static int changed_zone_list(int argc, char **argv, struct command *cmd, struct 
 	}
 
 	err = nvme_get_log(fd, cfg.namespace_id, NVME_LOG_ZONE_CHANGED_LIST, 
-						cfg.rae, sizeof(log), &log);
+						cfg.rae, NVME_NO_LOG_LSP, sizeof(log), &log);
 	if (!err)
 		nvme_show_zns_changed(&log, flags);
 	else if (err > 0)

@@ -136,6 +136,16 @@ void *nvme_alloc(size_t len, bool *huge)
 }
 #endif
 
+static bool is_chardev(void)
+{
+	return S_ISCHR(nvme_stat.st_mode);
+}
+
+static bool is_blkdev(void)
+{
+	return S_ISBLK(nvme_stat.st_mode);
+}
+
 static int open_dev(char *dev)
 {
 	int err, fd;
@@ -151,7 +161,7 @@ static int open_dev(char *dev)
 		close(fd);
 		goto perror;
 	}
-	if (!S_ISCHR(nvme_stat.st_mode) && !S_ISBLK(nvme_stat.st_mode)) {
+	if (!is_chardev() && !is_blkdev()) {
 		fprintf(stderr, "%s is not a block or character device\n", dev);
 		close(fd);
 		return -ENODEV;
@@ -732,6 +742,265 @@ static int get_changed_ns_list_log(int argc, char **argv, struct command *cmd, s
 	else
 		perror("changed ns list log");
 close_fd:
+	close(fd);
+ret:
+	return nvme_status_to_errno(err, false);
+}
+
+static int get_pred_lat_per_nvmset_log(int argc, char **argv,
+	struct command *cmd, struct plugin *plugin)
+{
+	const char *desc = "Retrieve Predictable latency per nvm set log "\
+			"page and prints it for the given device in either decoded " \
+			"format(default),json or binary.";
+	const char *nvmset_id = "NVM Set Identifier";
+	const char *raw = "use binary output";
+	struct nvme_predlat_per_nvmset_log_page plpns_log;
+	enum nvme_print_flags flags;
+	int err, fd;
+
+	struct config {
+		__u16 nvmset_id;
+		char *output_format;
+		int raw_binary;
+	};
+
+	struct config cfg = {
+		.nvmset_id = 1,
+		.output_format = "normal",
+	};
+
+	OPT_ARGS(opts) = {
+		OPT_UINT("nvmset-id", 	 'i', &cfg.nvmset_id,     nvmset_id),
+		OPT_FMT("output-format", 'o', &cfg.output_format, output_format),
+		OPT_FLAG("raw-binary",   'b', &cfg.raw_binary, 	  raw),
+		OPT_END()
+	};
+
+	err = fd = parse_and_open(argc, argv, desc, opts);
+	if (fd < 0)
+		goto ret;
+
+	err = flags = validate_output_format(cfg.output_format);
+	if (flags < 0)
+		goto close_fd;
+	if (cfg.raw_binary)
+		flags = BINARY;
+
+	err = nvme_predictable_latency_per_nvmset_log(fd,
+		cfg.nvmset_id, &plpns_log);
+	if (!err)
+		nvme_show_predictable_latency_per_nvmset(&plpns_log,
+			cfg.nvmset_id, devicename, flags);
+	else if (err > 0)
+		nvme_show_status(err);
+	else
+		perror("predictable latency per nvm set");
+
+close_fd:
+	close(fd);
+ret:
+	return nvme_status_to_errno(err, false);
+}
+
+static int get_pred_lat_event_agg_log(int argc, char **argv,
+		struct command *cmd, struct plugin *plugin)
+{
+	const char *desc = "Retrieve Predictable Latency Event" \
+			"Aggregate Log page and prints it, for the given" \
+			"device in either decoded format(default)," \
+			"json or binary.";
+	const char *log_entries = "Number of pending NVM Set" \
+			"log Entries list";
+	const char *rae = "Retain an Asynchronous Event";
+	const char *raw = "use binary output";
+	void *pea_log;
+	struct nvme_id_ctrl ctrl;
+	enum nvme_print_flags flags;
+	int err, fd;
+	__u32 log_size;
+
+	struct config {
+		__u64 log_entries;
+		bool rae;
+		char *output_format;
+		int raw_binary;
+	};
+
+	struct config cfg = {
+		.log_entries = 2044,
+		.rae = false,
+		.output_format = "normal",
+	};
+
+	OPT_ARGS(opts) = {
+		OPT_UINT("log-entries",  'e', &cfg.log_entries,   log_entries),
+		OPT_FLAG("rae",          'r', &cfg.rae,           rae),
+		OPT_FMT("output-format", 'o', &cfg.output_format, output_format),
+		OPT_FLAG("raw-binary",   'b', &cfg.raw_binary,    raw),
+		OPT_END()
+	};
+
+	err = fd = parse_and_open(argc, argv, desc, opts);
+	if (fd < 0)
+		goto ret;
+
+	err = flags = validate_output_format(cfg.output_format);
+	if (flags < 0)
+		goto close_fd;
+	if (cfg.raw_binary)
+		flags = BINARY;
+
+	if (!cfg.log_entries) {
+		fprintf(stderr, "non-zero log-entries is required param\n");
+		err = -EINVAL;
+		goto close_fd;
+	}
+
+	err = nvme_identify_ctrl(fd, &ctrl);
+	if (err < 0) {
+		perror("identify controller");
+		goto close_fd;
+	} else if (err) {
+		nvme_show_status(err);
+		goto close_fd;
+	}
+
+	cfg.log_entries = min(cfg.log_entries, le32_to_cpu(ctrl.nsetidmax));
+	log_size = sizeof(__u64) + cfg.log_entries * sizeof(__u16);
+	pea_log = calloc(log_size, 1);
+	if (!pea_log) {
+		fprintf(stderr, "could not alloc buffer for predictable " \
+			"latency event agggregate log entries\n");
+		err = -ENOMEM;
+		goto close_fd;
+	}
+
+	err = nvme_predictable_latency_event_agg_log(fd, pea_log, cfg.rae,
+		log_size);
+	if (!err)
+		nvme_show_predictable_latency_event_agg_log(pea_log, cfg.log_entries,
+			log_size, devicename, flags);
+	else if (err > 0)
+		nvme_show_status(err);
+	else
+		perror("predictable latency event gggregate log page");
+	free(pea_log);
+
+close_fd:
+	close(fd);
+ret:
+	return nvme_status_to_errno(err, false);
+}
+
+static int get_persistent_event_log(int argc, char **argv,
+		struct command *cmd, struct plugin *plugin)
+{
+	const char *desc = "Retrieve Persistent Event log info for"\
+			"the given device in either decoded format(default),"\
+			" json or binary.";
+	const char *action = "action the controller shall take during"\
+			"processing this persistent log page command.";
+	const char *log_len = "number of bytes to retrieve";
+	const char *raw = "use binary output";
+	void *pevent_log_info;
+	struct nvme_persistent_event_log_head *pevent_log_head;
+	enum nvme_print_flags flags;
+	int err, fd;
+	bool huge;
+
+	struct config {
+		__u8 action;
+		__u32 log_len;
+		int raw_binary;
+		char *output_format;
+	};
+
+	struct config cfg = {
+		.action = 0xff,
+		.log_len = 0,
+		.output_format = "normal",
+	};
+
+	OPT_ARGS(opts) = {
+		OPT_UINT("action",       'a', &cfg.action,        action),
+		OPT_UINT("log_len", 	 'l', &cfg.log_len,  	  log_len),
+		OPT_FMT("output-format", 'o', &cfg.output_format, output_format),
+		OPT_FLAG("raw-binary",   'b', &cfg.raw_binary,    raw),
+		OPT_END()
+	};
+
+	err = fd = parse_and_open(argc, argv, desc, opts);
+	if (fd < 0)
+		goto ret;
+
+	err = flags = validate_output_format(cfg.output_format);
+	if (flags < 0)
+		goto close_fd;
+	if (cfg.raw_binary)
+		flags = BINARY;
+
+	pevent_log_head = calloc(sizeof(*pevent_log_head), 1);
+	if (!pevent_log_head) {
+		fprintf(stderr, "could not alloc buffer for persistent " \
+			"event log header\n");
+		err = -ENOMEM;
+		goto close_fd;
+	}
+
+	err = nvme_persistent_event_log(fd, cfg.action,
+			sizeof(*pevent_log_head), pevent_log_head);
+	if (err < 0) {
+		perror("persistent event log");
+		goto close_fd;
+	} else if (err) {
+		nvme_show_status(err);
+		goto close_fd;
+	}
+
+	if (cfg.action == NVME_PEVENT_LOG_RELEASE_CTX) {
+		printf("Releasing Persistent Event Log Context\n");
+		goto close_fd;
+	}
+
+	if (!cfg.log_len && cfg.action != NVME_PEVENT_LOG_EST_CTX_AND_READ) {
+		cfg.log_len = le64_to_cpu(pevent_log_head->tll);
+	} else if (!cfg.log_len && cfg.action == NVME_PEVENT_LOG_EST_CTX_AND_READ) {
+		printf("Establishing Persistent Event Log Context\n");
+		goto close_fd;
+	}
+
+	/*
+	 * if header aleady read with context establish action 0x1,
+	 * action shall not be 0x1 again in the subsequent request,
+	 * until the current context is released by issuing action
+	 * with 0x2, otherwise throws command sequence error, make
+	 * it as zero to read the log page
+	 */
+	if (cfg.action == NVME_PEVENT_LOG_EST_CTX_AND_READ)
+		cfg.action = NVME_PEVENT_LOG_READ;
+
+	pevent_log_info = nvme_alloc(cfg.log_len, &huge);
+	if (!pevent_log_info) {
+		fprintf(stderr, "could not alloc buffer for persistent " \
+			"event log page\n");
+		err = -ENOMEM;
+		goto close_fd;
+	}
+	err = nvme_persistent_event_log(fd, cfg.action,
+		cfg.log_len, pevent_log_info);
+	if (!err)
+		nvme_show_persistent_event_log(pevent_log_info, cfg.action,
+			cfg.log_len, devicename, flags);
+	else if (err > 0)
+		nvme_show_status(err);
+	else
+		perror("persistent event log");
+
+	nvme_free(pevent_log_info, huge);
+
+close_fd:
+	free(pevent_log_head);
 	close(fd);
 ret:
 	return nvme_status_to_errno(err, false);
@@ -2753,6 +3022,7 @@ static int format(int argc, char **argv, struct command *cmd, struct plugin *plu
 	struct nvme_id_ns ns;
 	struct nvme_id_ctrl ctrl;
 	int err, fd, i;
+	int block_size;
 	__u8 prev_lbaf = 0;
 	__u8 lbads = 0;
 
@@ -2929,13 +3199,29 @@ static int format(int argc, char **argv, struct command *cmd, struct plugin *plu
 	else {
 		printf("Success formatting namespace:%x\n", cfg.namespace_id);
 		if (cfg.lbaf != prev_lbaf){
-			if (S_ISCHR(nvme_stat.st_mode)) {
+			if (is_chardev()) {
 				if(ioctl(fd, NVME_IOCTL_RESCAN) < 0){
 					fprintf(stderr, "failed to rescan namespaces\n");
 					err = -errno;
 					goto close_fd;
 				}
 			} else {
+				block_size = 1 << ns.lbaf[cfg.lbaf].ds;
+
+				/*
+				 * If block size has been changed by the format
+				 * command up there, we should notify it to
+				 * kernel blkdev to update its own block size
+				 * to the given one because blkdev will not
+				 * update by itself without re-opening fd.
+				 */
+				if (ioctl(fd, BLKBSZSET, &block_size) < 0) {
+					fprintf(stderr, "failed to set block size to %d\n",
+							block_size);
+					err = -errno;
+					goto close_fd;
+				}
+
 				if(ioctl(fd, BLKRRPART) < 0) {
 					fprintf(stderr, "failed to re-read partition table\n");
 					err = -errno;
@@ -2943,7 +3229,7 @@ static int format(int argc, char **argv, struct command *cmd, struct plugin *plu
 				}
 			}
 		}
-		if (cfg.reset && S_ISCHR(nvme_stat.st_mode))
+		if (cfg.reset && is_chardev())
 			nvme_reset_controller(fd);
 	}
 
@@ -3561,7 +3847,7 @@ static int dsm(int argc, char **argv, struct command *cmd, struct plugin *plugin
 	if (!cfg.cdw11)
 		cfg.cdw11 = (cfg.ad << 2) | (cfg.idw << 1) | (cfg.idr << 0);
 
-	dsm = nvme_setup_dsm_range((__u32 *)ctx_attrs, (__u32 *)nlbs, (__u64 *)slbas, nr);
+	dsm = nvme_setup_dsm_range(ctx_attrs, nlbs, slbas, nr);
 	if (!dsm) {
 		fprintf(stderr, "failed to allocate data set payload\n");
 		err = -ENOMEM;
@@ -3688,9 +3974,7 @@ static int copy(int argc, char **argv, struct command *cmd, struct plugin *plugi
 		goto close_fd;
 	}
 
-	copy = nvme_setup_copy_range((__u16 *)nlbs, (__u64 *)slbas,
-			(__u32 *)eilbrts, (__u16 *)elbatms, (__u16 *)elbats,
-			nr);
+	copy = nvme_setup_copy_range(nlbs, slbas, eilbrts, elbatms, elbats, nr);
 	if (!copy) {
 		fprintf(stderr, "failed to allocate payload\n");
 		err = -ENOMEM;
