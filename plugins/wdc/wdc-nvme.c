@@ -7574,6 +7574,8 @@ static int wdc_vs_drive_info(int argc, char **argv,
 		if (fmt == NORMAL) {
 			printf("Drive HW Revison:   %c.%c \n", major_rev, minor_rev);
 			printf("Customer SN:        %-.*s\n", 14, &vsData[0]);
+			printf("Drive HW Revison new:   %c.%c \n", ctrl.sn[16], ctrl.sn[17]);
+			printf("Customer SN new:        %-.*s\n", 20, &ctrl.sn[4]);
 		}
 		else if (fmt == JSON) {
 	   		root = json_create_object();
