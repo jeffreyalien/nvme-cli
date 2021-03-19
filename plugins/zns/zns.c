@@ -670,6 +670,7 @@ static int zone_append(int argc, char **argv, struct command *cmd, struct plugin
 	const char *limited_retry = "limit media access attempts";
 	const char *fua = "force unit access";
 	const char *prinfo = "protection information action and checks field";
+	const char *piremap = "protection information remap (for type 1 PI)";
 	const char *ref_tag = "reference tag (for end to end PI)";
 	const char *lbat = "logical block application tag (for end to end PI)";
 	const char *lbatm = "logical block application tag mask (for end to end PI)";
@@ -699,6 +700,7 @@ static int zone_append(int argc, char **argv, struct command *cmd, struct plugin
 		__u16  lbat;
 		__u16  lbatm;
 		__u8   prinfo;
+		int    piremap;
 		int   latency;
 	};
 
@@ -718,6 +720,7 @@ static int zone_append(int argc, char **argv, struct command *cmd, struct plugin
 		OPT_SHRT("app-tag-mask",      'm', &cfg.lbatm,         lbatm),
 		OPT_SHRT("app-tag",           'a', &cfg.lbat,          lbat),
 		OPT_BYTE("prinfo",            'p', &cfg.prinfo,        prinfo),
+		OPT_FLAG("piremap",           'P', &cfg.piremap,       piremap),
 		OPT_FLAG("latency",           't', &cfg.latency,       latency),
 		OPT_END()
 	};
@@ -756,7 +759,8 @@ static int zone_append(int argc, char **argv, struct command *cmd, struct plugin
 	}
 
 	meta_size = ns.lbaf[(ns.flbas & 0x0f)].ms;
-	if (meta_size && (!cfg.metadata_size || cfg.metadata_size % meta_size)) {
+	if (meta_size && !(meta_size == 8 && (cfg.prinfo & 0x8)) &&
+			(!cfg.metadata_size || cfg.metadata_size % meta_size)) {
 		fprintf(stderr,
 			"Metadata size:%#"PRIx64" not aligned to metadata size:%#x\n",
 			(uint64_t)cfg.metadata_size, meta_size);
@@ -822,6 +826,8 @@ static int zone_append(int argc, char **argv, struct command *cmd, struct plugin
 		control |= NVME_RW_LR;
 	if (cfg.fua)
 		control |= NVME_RW_FUA;
+	if (cfg.piremap)
+		control |= NVME_RW_PIREMAP;
 
 	gettimeofday(&start_time, NULL);
 	err = nvme_zns_append(fd, cfg.namespace_id, cfg.zslba, nblocks,

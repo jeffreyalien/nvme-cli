@@ -1561,16 +1561,18 @@ static int create_ns(int argc, char **argv, struct command *cmd, struct plugin *
 		"parameters. The next available namespace ID is used for the "\
 		"create operation. Note that create-ns does not attach the "\
 		"namespace to a controller, the attach-ns command is needed.";
-	const char *nsze = "size of ns";
-	const char *ncap = "capacity of ns";
-	const char *flbas = "FLBA size";
-	const char *dps = "data protection capabilities";
-	const char *nmic = "multipath and sharing capabilities";
-	const char *anagrpid = "ANA Group Identifier";
-	const char *nvmsetid = "NVM Set Identifier";
-	const char *csi = "command set identifier";
+	const char *nsze = "size of ns (NSZE)";
+	const char *ncap = "capacity of ns (NCAP)";
+	const char *flbas = "Formatted LBA size (FLBAS), if entering this "\
+		"value ignore \'block-size\' field";
+	const char *dps = "data protection settings (DPS)";
+	const char *nmic = "multipath and sharing capabilities (NMIC)";
+	const char *anagrpid = "ANA Group Identifier (ANAGRPID)";
+	const char *nvmsetid = "NVM Set Identifier (NVMSETID)";
+	const char *csi = "command set identifier (CSI)";
 	const char *timeout = "timeout value, in milliseconds";
-	const char *bs = "target block size";
+	const char *bs = "target block size, specify only if \'FLBAS\' "\
+		"value not entered";
 
 	int err = 0, fd, i;
 	struct nvme_id_ns ns;
@@ -4574,7 +4576,7 @@ static int resv_report(int argc, char **argv, struct command *cmd, struct plugin
 	if (!err)
 		nvme_show_resv_report(status, size, cfg.cdw11, flags);
 	else if (err > 0)
-		fprintf(stderr, "NVME IO command error:%04x\n", err);
+		nvme_show_status(err);
 	else
 		perror("reservation report");
 	free(status);
@@ -5131,7 +5133,7 @@ static int get_lba_status(int argc, char **argv, struct command *cmd,
 	if (!err)
 		nvme_show_lba_status(buf, buf_len, flags);
 	else if (err > 0)
-		fprintf(stderr, "NVME command error:%04x\n", err);
+		nvme_show_status(err);
 	else
 		perror("get lba status");
 	free(buf);
