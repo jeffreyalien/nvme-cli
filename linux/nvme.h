@@ -781,7 +781,8 @@ struct nvme_change_ns_event {
 	__le32	nsmgt_cdw10;
 	__u8	rsvd4[4];
 	__le64	nsze;
-	__u8	nscap[16];
+	__u8	rsvd16[8];
+	__le64	nscap;
 	__u8	flbas;
 	__u8	dps;
 	__u8	nmic;
@@ -932,6 +933,15 @@ struct nvme_lba_status_hdr {
 	__le32	estulb;
 	__u8	rsvd12[2];
 	__le16	lsgc;
+};
+
+struct nvme_resv_notif_log {
+	__le64	log_page_count;
+	__u8	resv_notif_log_type;
+	__u8	num_logs;
+	__u8	rsvd10[2];
+	__le32	nsid;
+	__u8	rsvd16[48];
 };
 
 enum {
@@ -1270,6 +1280,7 @@ enum nvme_feat {
 	NVME_FEAT_RRL		= 0x12,
 	NVME_FEAT_PLM_CONFIG	= 0x13,
 	NVME_FEAT_PLM_WINDOW	= 0x14,
+	NVME_LBA_STATUS_INFO	= 0x15,
 	NVME_FEAT_HOST_BEHAVIOR	= 0x16,
 	NVME_FEAT_SANITIZE	= 0x17,
       NVME_FEAT_ENDURANCE     = 0x18,
@@ -1565,7 +1576,7 @@ enum {
 
 	NVME_SC_NS_WRITE_PROTECTED	= 0x20,
 	NVME_SC_CMD_INTERRUPTED		= 0x21,
-	NVME_SC_TRANSIENT_TRANSPORT	= 0x22,	
+	NVME_SC_TRANSIENT_TRANSPORT	= 0x22,
 
 	NVME_SC_LBA_RANGE		= 0x80,
 	NVME_SC_CAP_EXCEEDED		= 0x81,

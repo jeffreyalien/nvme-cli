@@ -44,7 +44,7 @@ static const char *nvme_ana_state_to_string(enum nvme_ana_state state)
 	return "invalid state";
 }
 
-static const char *nvme_cmd_to_string(int admin, __u8 opcode)
+const char *nvme_cmd_to_string(int admin, __u8 opcode)
 {
 	if (admin) {
 		switch (opcode) {
@@ -1267,9 +1267,8 @@ void json_persistent_event_log(void *pevent_log_info, __u32 size)
 				le32_to_cpu(ns_event->nsmgt_cdw10));
 			json_object_add_value_uint(valid_attrs, "nsze",
 				le64_to_cpu(ns_event->nsze));
-			long double nscap = int128_to_double(ns_event->nscap);
-			json_object_add_value_float(valid_attrs, "nscap",
-				nscap);
+			json_object_add_value_uint(valid_attrs, "nscap",
+				le64_to_cpu(ns_event->nscap));
 			json_object_add_value_uint(valid_attrs, "flbas",
 				ns_event->flbas);
 			json_object_add_value_uint(valid_attrs, "dps",
@@ -1506,8 +1505,8 @@ void nvme_show_persistent_event_log(void *pevent_log_info,
 				le32_to_cpu(ns_event->nsmgt_cdw10));
 			printf("Namespace Size: %"PRIu64"\n",
 				le64_to_cpu(ns_event->nsze));
-			printf("Namespace Capacity: %'.0Lf\n",
-				int128_to_double(ns_event->nscap));
+			printf("Namespace Capacity: %"PRIu64"\n",
+				le64_to_cpu(ns_event->nscap));
 			printf("Formatted LBA Size: %u\n", ns_event->flbas);
 			printf("End-to-end Data Protection Type Settings: %u\n",
 				ns_event->dps);
@@ -1731,6 +1730,55 @@ void nvme_show_lba_status_log(void *lba_status, __u32 size,
 				"NS element %d\n", num_lba_desc, ele);
 		}
 	}
+}
+
+static const char *resv_notif_to_string(__u8 type)
+{
+	switch (type) {
+	case 0x1: return "Empty Log Page";
+	case 0x2: return "Registration Preempted";
+	case 0x3: return "Reservation Released";
+	case 0x4: return "Reservation Preempted";
+	default:  return "Reserved";
+	}
+}
+
+static void json_resv_notif_log(struct nvme_resv_notif_log *resv)
+{
+	struct json_object *root;
+
+	root = json_create_object();
+	json_object_add_value_uint(root, "count",
+		le64_to_cpu(resv->log_page_count));
+	json_object_add_value_uint(root, "rn_log_type",
+		resv->resv_notif_log_type);
+	json_object_add_value_uint(root, "num_logs",
+		resv->num_logs);
+	json_object_add_value_uint(root, "nsid",
+		le32_to_cpu(resv->nsid));
+
+	json_print_object(root, NULL);
+	printf("\n");
+	json_free_object(root);
+}
+
+void nvme_show_resv_notif_log(struct nvme_resv_notif_log *resv,
+	const char *devname, enum nvme_print_flags flags)
+{
+	if (flags & BINARY)
+		return d_raw((unsigned char *)resv, sizeof(*resv));
+	if (flags & JSON)
+		return json_resv_notif_log(resv);
+
+	printf("Reservation Notif Log for device: %s\n", devname);
+	printf("Log Page Count				: %"PRIx64"\n",
+		le64_to_cpu(resv->log_page_count));
+	printf("Resv Notif Log Page Type	: %u (%s)\n",
+		resv->resv_notif_log_type,
+		resv_notif_to_string(resv->resv_notif_log_type));
+	printf("Num of Available Log Pages	: %u\n", resv->num_logs);
+	printf("Namespace ID:				: %"PRIx32"\n",
+		le32_to_cpu(resv->nsid));
 }
 
 static void nvme_show_subsystem(struct nvme_subsystem *s)
@@ -2514,7 +2562,7 @@ void nvme_show_relatives(const char *name)
 			free(path);
 			return;
 		}
-		err = scan_subsystems(&t, subsysnqn, 0, NULL);
+		err = scan_subsystems(&t, subsysnqn, 0, 0, NULL);
 		if (err || t.nr_subsystems != 1) {
 			free(subsysnqn);
 			free(path);
@@ -4964,6 +5012,7 @@ const char *nvme_feature_to_string(enum nvme_feat feature)
 	case NVME_FEAT_RRL:		return "Read Recovery Level";
 	case NVME_FEAT_PLM_CONFIG:	return "Predicatable Latency Mode Config";
 	case NVME_FEAT_PLM_WINDOW:	return "Predicatable Latency Mode Window";
+	case NVME_LBA_STATUS_INFO:	return "LBA Status Infomation Attributes";
       case NVME_FEAT_ENDURANCE:       return "Enduarance Event Group Configuration";
 	case NVME_FEAT_IOCS_PROFILE:	return "I/O Command Set Profile";
 	case NVME_FEAT_SW_PROGRESS:	return "Software Progress";
@@ -5468,6 +5517,11 @@ static const char *nvme_plm_window(__u32 plm)
 	}
 }
 
+void nvme_show_lba_status_info(__u32 result) {
+	printf("\tLBA Status Information Poll Interval (LSIPI)	: %u\n", (result >> 16) & 0xffff);
+	printf("\tLBA Status Information Report Interval (LSIRI): %u\n", result & 0xffff);
+}
+
 static void nvme_show_plm_config(struct nvme_plm_config *plmcfg)
 {
 	printf("\tEnable Event          :%04x\n", le16_to_cpu(plmcfg->enable_event));
@@ -5561,6 +5615,9 @@ void nvme_feature_show_fields(enum nvme_feat fid, unsigned int result, unsigned 
 		break;
 	case NVME_FEAT_PLM_WINDOW:
 		printf("\tWindow Select: %s", nvme_plm_window(result));
+		break;
+	case NVME_LBA_STATUS_INFO:
+		nvme_show_lba_status_info(result);
 		break;
       case NVME_FEAT_ENDURANCE:
               printf("\tEndurance Group Identifier (ENDGID): %u\n", result & 0xffff);
