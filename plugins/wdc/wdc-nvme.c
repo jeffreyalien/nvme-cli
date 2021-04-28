@@ -46,6 +46,8 @@
 #include "wdc-nvme.h"
 #include "wdc-utils.h"
 
+static const char nvme_plugin_version_string[] = "1.13";
+
 #define WRITE_SIZE	(sizeof(__u8) * 4096)
 
 #define WDC_NVME_SUBCMD_SHIFT				8
@@ -7878,6 +7880,27 @@ static int wdc_cloud_ssd_plugin_version(int argc, char **argv,
 	} else {
 		fprintf(stderr, "ERROR : WDC: unsupported device for this command\n");
 	}
+
+    return 0;
+}
+
+static int wdc_plugin_version(int argc, char **argv,
+        struct command *command, struct plugin *plugin)
+{
+    const char *desc = "Get WDC Plugin Version command.";
+    int fd;
+
+    OPT_ARGS(opts) =
+    {
+        OPT_END()
+    };
+
+    fd = parse_and_open(argc, argv, desc, opts);
+    if (fd < 0)
+        return fd;
+
+    /* print command and supported status */
+    printf("%s\n", nvme_plugin_version_string);
 
     return 0;
 }

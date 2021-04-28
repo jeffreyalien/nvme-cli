@@ -35,6 +35,7 @@ PLUGIN(NAME("wdc", "Western Digital vendor specific extensions"),
 		ENTRY("capabilities", "WDC Device Capabilities", wdc_capabilities)
 		ENTRY("cloud-SSD-plugin-version", "WDC Cloud SSD Plugin Version", wdc_cloud_ssd_plugin_version)
 		ENTRY("vs-pcie-stats", "WDC VS PCIE Statistics", wdc_vs_pcie_stats)
+		ENTRY("plugin-version", "WDC Plugin Version", wdc_plugin_version)
 	)
 );
 
