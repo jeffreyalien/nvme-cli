@@ -6,7 +6,7 @@
 
 #include "cmd.h"
 
-PLUGIN(NAME("memblaze", "Memblaze vendor specific extensions"),
+PLUGIN(NAME("memblaze", "Memblaze vendor specific extensions", NVME_VERSION),
 	COMMAND_LIST(
 		ENTRY("smart-log-add", "Retrieve Memblaze SMART Log, show it", get_additional_smart_log)
 		ENTRY("get-feature-add", "Get Memblaze feature and show the resulting value", get_additional_feature)

@@ -46,8 +46,6 @@
 #include "wdc-nvme.h"
 #include "wdc-utils.h"
 
-static const char nvme_plugin_version_string[] = "1.13";
-
 #define WRITE_SIZE	(sizeof(__u8) * 4096)
 
 #define WDC_NVME_SUBCMD_SHIFT				8
@@ -81,6 +79,8 @@ static const char nvme_plugin_version_string[] = "1.13";
 #define WDC_NVME_SN650_DEV_ID_1             0x2701
 #define WDC_NVME_SN650_DEV_ID_2             0x2702
 #define WDC_NVME_SN650_DEV_ID_3             0x2720
+#define WDC_NVME_SN450_DEV_ID_1             0x2712
+#define WDC_NVME_SN450_DEV_ID_2             0x2713
 #define WDC_NVME_SXSLCL_DEV_ID				0x2001
 #define WDC_NVME_SN520_DEV_ID				0x5003
 #define WDC_NVME_SN520_DEV_ID_1				0x5004
@@ -127,6 +127,7 @@ static const char nvme_plugin_version_string[] = "1.13";
 #define WDC_DRIVE_CAP_DUI_DATA				0x0000000200000000
 #define WDC_SN730B_CAP_VUC_LOG				0x0000000400000000
 #define WDC_DRIVE_CAP_DUI    				0x0000000800000000
+#define WDC_DRIVE_CAP_PURGE				0x0000001000000000
 #define WDC_DRIVE_CAP_SMART_LOG_MASK	(WDC_DRIVE_CAP_C0_LOG_PAGE | WDC_DRIVE_CAP_C1_LOG_PAGE | \
                                          WDC_DRIVE_CAP_CA_LOG_PAGE | WDC_DRIVE_CAP_D0_LOG_PAGE)
 #define WDC_DRIVE_CAP_CLEAR_PCIE_MASK       (WDC_DRIVE_CAP_CLEAR_PCIE | \
@@ -956,7 +957,7 @@ struct __attribute__((__packed__)) wdc_fw_act_history_log_format_c2 {
 	__u8		log_identifier;
 	__u8 		reserved[3];
 	__le32		num_entries;
-	struct 		wdc_fw_act_history_log_entry_c2 entry[20];
+	struct 		wdc_fw_act_history_log_entry_c2 entry[WDC_MAX_NUM_ACT_HIST_ENTRIES];
 	__u8 		reserved2[2790];
 	__le16 		log_page_version;
 	__u8 		log_page_guid[WDC_C2_GUID_LENGTH];
@@ -1183,11 +1184,13 @@ static __u64 wdc_get_drive_capabilities(int fd) {
 		switch (read_device_id) {
 		case WDC_NVME_SN100_DEV_ID:
 			capabilities = (WDC_DRIVE_CAP_CAP_DIAG | WDC_DRIVE_CAP_INTERNAL_LOG | WDC_DRIVE_CAP_C1_LOG_PAGE |
-					WDC_DRIVE_CAP_DRIVE_LOG | WDC_DRIVE_CAP_CRASH_DUMP | WDC_DRIVE_CAP_PFAIL_DUMP);
+					WDC_DRIVE_CAP_DRIVE_LOG | WDC_DRIVE_CAP_CRASH_DUMP | WDC_DRIVE_CAP_PFAIL_DUMP |
+					WDC_DRIVE_CAP_PURGE);
 			break;
 		case WDC_NVME_SN200_DEV_ID:
 			capabilities = (WDC_DRIVE_CAP_CAP_DIAG | WDC_DRIVE_CAP_INTERNAL_LOG | WDC_DRIVE_CAP_CLEAR_PCIE |
-					WDC_DRIVE_CAP_DRIVE_LOG | WDC_DRIVE_CAP_CRASH_DUMP | WDC_DRIVE_CAP_PFAIL_DUMP);
+					WDC_DRIVE_CAP_DRIVE_LOG | WDC_DRIVE_CAP_CRASH_DUMP | WDC_DRIVE_CAP_PFAIL_DUMP |
+					WDC_DRIVE_CAP_PURGE);
 
 			/* verify the 0xCA log page is supported */
 			if (wdc_nvme_check_supported_log_page(fd, WDC_NVME_GET_DEVICE_INFO_LOG_OPCODE) == true)
@@ -1289,6 +1292,8 @@ static __u64 wdc_get_drive_capabilities(int fd) {
 		case WDC_NVME_SN650_DEV_ID_1:
 		case WDC_NVME_SN650_DEV_ID_2:
 		case WDC_NVME_SN650_DEV_ID_3:
+		case WDC_NVME_SN450_DEV_ID_1:
+		case WDC_NVME_SN450_DEV_ID_2:
 			/* verify the 0xC0 log page is supported */
 			if (wdc_nvme_check_supported_log_page(fd, WDC_NVME_GET_EOL_STATUS_LOG_OPCODE) == true) {
 				capabilities |= WDC_DRIVE_CAP_C0_LOG_PAGE;
@@ -3265,14 +3270,11 @@ static int wdc_purge(int argc, char **argv,
 	char *err_str;
 	int fd, ret;
 	struct nvme_passthru_cmd admin_cmd;
+	__u64 capabilities = 0;
 
 	OPT_ARGS(opts) = {
 		OPT_END()
 	};
-
-	err_str = "";
-	memset(&admin_cmd, 0, sizeof (admin_cmd));
-	admin_cmd.opcode = WDC_NVME_PURGE_CMD_OPCODE;
 
 	fd = parse_and_open(argc, argv, desc, opts);
 	if (fd < 0)
@@ -3281,23 +3283,33 @@ static int wdc_purge(int argc, char **argv,
 	if (!wdc_check_device(fd))
 		return -1;
 
-	ret = nvme_submit_admin_passthru(fd, &admin_cmd);
-	if (ret > 0) {
-		switch (ret) {
-		case WDC_NVME_PURGE_CMD_SEQ_ERR:
-			err_str = "ERROR : WDC : Cannot execute purge, "
-					"Purge operation is in progress.\n";
-			break;
-		case WDC_NVME_PURGE_INT_DEV_ERR:
-			err_str = "ERROR : WDC : Internal Device Error.\n";
-			break;
-		default:
-			err_str = "ERROR : WDC\n";
-		}
-	}
+	capabilities = wdc_get_drive_capabilities(fd);
+	if((capabilities & WDC_DRIVE_CAP_PURGE) == 0) {
+		ret = -1;
+		fprintf(stderr, "ERROR : WDC: unsupported device for this command\n");
+	} else {
+		err_str = "";
+		memset(&admin_cmd, 0, sizeof (admin_cmd));
+		admin_cmd.opcode = WDC_NVME_PURGE_CMD_OPCODE;
 
-	fprintf(stderr, "%s", err_str);
-	fprintf(stderr, "NVMe Status:%s(%x)\n", nvme_status_to_string(ret), ret);
+		ret = nvme_submit_admin_passthru(fd, &admin_cmd);
+		if (ret > 0) {
+			switch (ret) {
+			case WDC_NVME_PURGE_CMD_SEQ_ERR:
+				err_str = "ERROR : WDC : Cannot execute purge, "
+						"Purge operation is in progress.\n";
+				break;
+			case WDC_NVME_PURGE_INT_DEV_ERR:
+				err_str = "ERROR : WDC : Internal Device Error.\n";
+				break;
+			default:
+				err_str = "ERROR : WDC\n";
+			}
+		}
+
+		fprintf(stderr, "%s", err_str);
+		fprintf(stderr, "NVMe Status:%s(%x)\n", nvme_status_to_string(ret), ret);
+	}
 	return ret;
 }
 
@@ -3310,18 +3322,11 @@ static int wdc_purge_monitor(int argc, char **argv,
 	double progress_percent;
 	struct nvme_passthru_cmd admin_cmd;
 	struct wdc_nvme_purge_monitor_data *mon;
+	__u64 capabilities = 0;
 
 	OPT_ARGS(opts) = {
 		OPT_END()
 	};
-
-	memset(output, 0, sizeof (output));
-	memset(&admin_cmd, 0, sizeof (struct nvme_admin_cmd));
-	admin_cmd.opcode = WDC_NVME_PURGE_MONITOR_OPCODE;
-	admin_cmd.addr = (__u64)(uintptr_t)output;
-	admin_cmd.data_len = WDC_NVME_PURGE_MONITOR_DATA_LEN;
-	admin_cmd.cdw10 = WDC_NVME_PURGE_MONITOR_CMD_CDW10;
-	admin_cmd.timeout_ms = WDC_NVME_PURGE_MONITOR_TIMEOUT;
 
 	fd = parse_and_open(argc, argv, desc, opts);
 	if (fd < 0)
@@ -3330,20 +3335,34 @@ static int wdc_purge_monitor(int argc, char **argv,
 	if (!wdc_check_device(fd))
 		return -1;
 
-	ret = nvme_submit_admin_passthru(fd, &admin_cmd);
-	if (ret == 0) {
-		mon = (struct wdc_nvme_purge_monitor_data *) output;
-		printf("Purge state = 0x%0x\n", admin_cmd.result);
-		printf("%s\n", wdc_purge_mon_status_to_string(admin_cmd.result));
-		if (admin_cmd.result == WDC_NVME_PURGE_STATE_BUSY) {
-			progress_percent =
-				((double)le32_to_cpu(mon->entire_progress_current) * 100) /
-				le32_to_cpu(mon->entire_progress_total);
-			printf("Purge Progress = %f%%\n", progress_percent);
-		}
-	}
+	capabilities = wdc_get_drive_capabilities(fd);
+	if((capabilities & WDC_DRIVE_CAP_PURGE) == 0) {
+		ret = -1;
+		fprintf(stderr, "ERROR : WDC: unsupported device for this command\n");
+	} else {
+		memset(output, 0, sizeof (output));
+		memset(&admin_cmd, 0, sizeof (struct nvme_admin_cmd));
+		admin_cmd.opcode = WDC_NVME_PURGE_MONITOR_OPCODE;
+		admin_cmd.addr = (__u64)(uintptr_t)output;
+		admin_cmd.data_len = WDC_NVME_PURGE_MONITOR_DATA_LEN;
+		admin_cmd.cdw10 = WDC_NVME_PURGE_MONITOR_CMD_CDW10;
+		admin_cmd.timeout_ms = WDC_NVME_PURGE_MONITOR_TIMEOUT;
 
-	fprintf(stderr, "NVMe Status:%s(%x)\n", nvme_status_to_string(ret), ret);
+		ret = nvme_submit_admin_passthru(fd, &admin_cmd);
+		if (ret == 0) {
+			mon = (struct wdc_nvme_purge_monitor_data *) output;
+			printf("Purge state = 0x%0x\n", admin_cmd.result);
+			printf("%s\n", wdc_purge_mon_status_to_string(admin_cmd.result));
+			if (admin_cmd.result == WDC_NVME_PURGE_STATE_BUSY) {
+				progress_percent =
+					((double)le32_to_cpu(mon->entire_progress_current) * 100) /
+					le32_to_cpu(mon->entire_progress_total);
+				printf("Purge Progress = %f%%\n", progress_percent);
+			}
+		}
+
+		fprintf(stderr, "NVMe Status:%s(%x)\n", nvme_status_to_string(ret), ret);
+	}
 	return ret;
 }
 
@@ -4008,9 +4027,9 @@ static void wdc_get_commit_action_bin(__u8 commit_action_type, char *action_bin)
 
 }
 
-static void wdc_print_fw_act_history_log_normal(__u8 *data, int num_entries, __u32 cust_id)
+static void wdc_print_fw_act_history_log_normal(__u8 *data, int num_entries, __u32 cust_id, __u32 vendor_id)
 {
-	int i;
+	int i, j;
 	char previous_fw[9];
 	char new_fw[9];
 	char commit_action_bin[8];
@@ -4021,7 +4040,7 @@ static void wdc_print_fw_act_history_log_normal(__u8 *data, int num_entries, __u
 
 	if (data[0] == WDC_NVME_GET_FW_ACT_HISTORY_C2_LOG_ID) {
 		printf("  Firmware Activate History Log \n");
-		if (cust_id == WDC_CUSTOMER_ID_0x1005) {
+		if (cust_id == WDC_CUSTOMER_ID_0x1005 || vendor_id == WDC_NVME_SNDK_VID) {
 			printf("           Power on Hour       Power Cycle     Previous    New                               \n");
 			printf("  Entry      hh:mm:ss             Count        Firmware    Firmware    Slot   Action  Result \n");
 			printf("  -----  -----------------  -----------------  ---------   ---------   -----  ------  -------\n");
@@ -4030,14 +4049,16 @@ static void wdc_print_fw_act_history_log_normal(__u8 *data, int num_entries, __u
 			printf("  Entry      Timestamp            Count        Firmware    Firmware    Slot   Action  Result \n");
 			printf("  -----  -----------------  -----------------  ---------   ---------   -----  ------  -------\n");
 		}
+
 		struct wdc_fw_act_history_log_format_c2 *fw_act_history_entry = (struct wdc_fw_act_history_log_format_c2 *)(data);
 
 		if (num_entries == WDC_MAX_NUM_ACT_HIST_ENTRIES) {
 			/* find lowest/oldest entry */
 			for (i = 0; i < num_entries; i++) {
+				j = (i+1 == WDC_MAX_NUM_ACT_HIST_ENTRIES) ? 0 : i+1;
 				if (le16_to_cpu(fw_act_history_entry->entry[i].fw_act_hist_entries) >
-						le16_to_cpu(fw_act_history_entry->entry[i+1].fw_act_hist_entries)) {
-					oldestEntryIdx = i+1;
+						le16_to_cpu(fw_act_history_entry->entry[j].fw_act_hist_entries)) {
+					oldestEntryIdx = j;
 					break;
 				}
 			}
@@ -4066,6 +4087,14 @@ static void wdc_print_fw_act_history_log_normal(__u8 *data, int num_entries, __u
 						(int)((le64_to_cpu(fw_act_history_entry->entry[entryIdx].timestamp%3600)/60)),
 						(int)(le64_to_cpu(fw_act_history_entry->entry[entryIdx].timestamp%60)));
 
+				printf("%s", time_str);
+				printf("     ");
+			} else if(vendor_id == WDC_NVME_SNDK_VID) {
+				printf("       ");
+				uint64_t timestamp = (0x0000FFFFFFFFFFFF & le64_to_cpu(fw_act_history_entry->entry[entryIdx].timestamp));
+				memset((void *)time_str, 0, 9);
+				sprintf((char *)time_str, "%04d:%02d:%02d", (int)((timestamp/(3600*1000))%24), (int)((timestamp/(1000*60))%60),
+						(int)((timestamp/1000)%60));
 				printf("%s", time_str);
 				printf("     ");
 			} else {
@@ -4163,10 +4192,10 @@ static void wdc_print_fw_act_history_log_normal(__u8 *data, int num_entries, __u
 	}
 }
 
-static void wdc_print_fw_act_history_log_json(__u8 *data, int num_entries, __u32 cust_id)
+static void wdc_print_fw_act_history_log_json(__u8 *data, int num_entries, __u32 cust_id, __u32 vendor_id)
 {
 	struct json_object *root;
-	int i;
+	int i, j;
 	char previous_fw[9];
 	char new_fw[9];
 	char commit_action_bin[8];
@@ -4188,9 +4217,10 @@ static void wdc_print_fw_act_history_log_json(__u8 *data, int num_entries, __u32
 		if (num_entries == WDC_MAX_NUM_ACT_HIST_ENTRIES) {
 			/* find lowest/oldest entry */
 			for (i = 0; i < num_entries; i++) {
+				j = (i+1 == WDC_MAX_NUM_ACT_HIST_ENTRIES) ? 0 : i+1;
 				if (le16_to_cpu(fw_act_history_entry->entry[i].fw_act_hist_entries) >
-						le16_to_cpu(fw_act_history_entry->entry[i+1].fw_act_hist_entries)) {
-					oldestEntryIdx = i+1;
+						le16_to_cpu(fw_act_history_entry->entry[j].fw_act_hist_entries)) {
+					oldestEntryIdx = j;
 					break;
 				}
 			}
@@ -4217,6 +4247,11 @@ static void wdc_print_fw_act_history_log_json(__u8 *data, int num_entries, __u32
 
 				json_object_add_value_string(root, "Power on Hour", time_str);
 
+			} else if (vendor_id == WDC_NVME_SNDK_VID) {
+				uint64_t timestamp = (0x0000FFFFFFFFFFFF & le64_to_cpu(fw_act_history_entry->entry[entryIdx].timestamp));
+				sprintf((char *)time_str, "%04d:%02d:%02d", (int)((timestamp/(3600*1000))%24), (int)((timestamp/(1000*60))%60),
+						(int)((timestamp/1000)%60));
+				json_object_add_value_string(root, "Power on Hour", time_str);
 			} else {
 				uint64_t timestamp = (0x0000FFFFFFFFFFFF & le64_to_cpu(fw_act_history_entry->entry[entryIdx].timestamp));
 				json_object_add_value_int(root, "Timestamp", timestamp);
@@ -4455,7 +4490,6 @@ static void wdc_print_smart_cloud_attr_C0_json(void *data)
 	memset((void*)guid, 0, 40);
 	sprintf((char*)guid, "0x%lX%lX",(uint64_t)le64_to_cpu(*(uint64_t *)&log_data[SCAO_LPG + 8]),
 		(uint64_t)le64_to_cpu(*(uint64_t *)&log_data[SCAO_LPG]));
-	printf("GUID string:%s", guid);
 	json_object_add_value_string(root, "Log page GUID", guid);
 	if(smart_log_ver > 2){
 		json_object_add_value_uint(root, "Errata Version Field",
@@ -4785,7 +4819,7 @@ static int wdc_print_d0_log(struct wdc_ssd_d0_smart_log *perf, int fmt)
 	return 0;
 }
 
-static int wdc_print_fw_act_history_log(__u8 *data, int num_entries, int fmt, __u32 cust_id)
+static int wdc_print_fw_act_history_log(__u8 *data, int num_entries, int fmt, __u32 cust_id, __u32 vendor_id)
 {
 	if (!data) {
 		fprintf(stderr, "ERROR : WDC : Invalid buffer to read fw activate history entries\n");
@@ -4794,10 +4828,10 @@ static int wdc_print_fw_act_history_log(__u8 *data, int num_entries, int fmt, __
 
 	switch (fmt) {
 	case NORMAL:
-		wdc_print_fw_act_history_log_normal(data, num_entries, cust_id);
+		wdc_print_fw_act_history_log_normal(data, num_entries, cust_id, vendor_id);
 		break;
 	case JSON:
-		wdc_print_fw_act_history_log_json(data, num_entries, cust_id);
+		wdc_print_fw_act_history_log_json(data, num_entries, cust_id, vendor_id);
 		break;
 	}
 	return 0;
@@ -5450,7 +5484,7 @@ static int wdc_get_fw_act_history(int fd, char *format)
 		fw_act_history_hdr = (struct wdc_fw_act_history_log_hdr *)(data);
 
 		if ((fw_act_history_hdr->num_entries > 0) && (fw_act_history_hdr->num_entries <= WDC_MAX_NUM_ACT_HIST_ENTRIES))
-			ret = wdc_print_fw_act_history_log(data, fw_act_history_hdr->num_entries, fmt, 0);
+			ret = wdc_print_fw_act_history_log(data, fw_act_history_hdr->num_entries, fmt, 0, 0);
 		else if (fw_act_history_hdr->num_entries == 0) {
 			fprintf(stderr, "INFO : WDC : No FW Activate History entries found.\n");
 			ret = 0;
@@ -5475,7 +5509,8 @@ static int wdc_get_fw_act_history_C2(int fd, char *format)
 	__u8 *data;
 	__u32 *cust_id;
 	struct wdc_fw_act_history_log_format_c2 *fw_act_history_log;
-	__u32 num_entries = 0;
+	__u32 tot_entries = 0, num_entries = 0;
+	__u32 vendor_id = 0, device_id = 0;
 
 	if (!wdc_check_device(fd))
 		return -1;
@@ -5485,6 +5520,7 @@ static int wdc_get_fw_act_history_C2(int fd, char *format)
 		fprintf(stderr, "ERROR : WDC : invalid output format\n");
 		return fmt;
 	}
+	ret = wdc_get_pci_ids(&device_id, &vendor_id);
 
 	if ((data = (__u8*) malloc(sizeof (__u8) * WDC_FW_ACT_HISTORY_C2_LOG_BUF_LEN)) == NULL) {
 		fprintf(stderr, "ERROR : WDC : malloc : %s\n", strerror(errno));
@@ -5502,24 +5538,21 @@ static int wdc_get_fw_act_history_C2(int fd, char *format)
 	if (ret == 0) {
 		/* parse the data */
 		fw_act_history_log = (struct wdc_fw_act_history_log_format_c2*)(data);
-		num_entries = le32_to_cpu(fw_act_history_log->num_entries);
+		tot_entries = le32_to_cpu(fw_act_history_log->num_entries);
 
-		if ((num_entries > 0) && (num_entries <= WDC_MAX_NUM_ACT_HIST_ENTRIES)) {
+		if (tot_entries > 0) {
 			/* get the FW customer id */
 			if (!get_dev_mgment_cbs_data(fd, WDC_C2_CUSTOMER_ID_ID, (void*)&cust_id)) {
 				fprintf(stderr, "%s: ERROR : WDC : 0xC2 Log Page entry ID 0x%x not found\n", __func__, WDC_C2_CUSTOMER_ID_ID);
 				ret = -1;
 				goto freeData;
 			}
-
-			ret = wdc_print_fw_act_history_log(data, num_entries, fmt, *cust_id);
-		} else if (num_entries == 0) {
+			num_entries = (tot_entries < WDC_MAX_NUM_ACT_HIST_ENTRIES) ? tot_entries :
+				WDC_MAX_NUM_ACT_HIST_ENTRIES;
+			ret = wdc_print_fw_act_history_log(data, num_entries, fmt, *cust_id, vendor_id);
+		} else  {
 			fprintf(stderr, "INFO : WDC : No FW Activate History entries found.\n");
 			ret = 0;
-		}
-		else {
-			fprintf(stderr, "ERROR : WDC : Invalid number entries found in FW Activate History Log Page - %d\n", num_entries);
-			ret = -1;
 		}
 	} else {
 		fprintf(stderr, "ERROR : WDC : Unable to read FW Activate History Log Page data\n");
@@ -7486,7 +7519,6 @@ static int wdc_vs_pcie_stats(int argc, char **argv, struct command *command,
 	int fmt = -1;
 	struct wdc_vs_pcie_stats *pcieStatsPtr = NULL;
 	int pcie_stats_size = sizeof(struct wdc_vs_pcie_stats);
-	//bool huge;
 
 	struct config {
 		char *output_format;
@@ -7513,7 +7545,6 @@ static int wdc_vs_pcie_stats(int argc, char **argv, struct command *command,
 	}
 
 	pcieStatsPtr = (struct wdc_vs_pcie_stats *) malloc(pcie_stats_size);
-	//pcieStatsPtr = nvme_alloc(pcie_stats_size, &huge);
 	if (pcieStatsPtr == NULL) {
 		fprintf(stderr, "ERROR : WDC : PCIE Stats alloc : %s\n", strerror(errno));
 		ret = -1;
@@ -7544,7 +7575,6 @@ static int wdc_vs_pcie_stats(int argc, char **argv, struct command *command,
 		}
 	}
 
-	//nvme_free(pcieStatsPtr, huge);
 	free(pcieStatsPtr);
 
 out:
@@ -7717,7 +7747,7 @@ static int wdc_vs_temperature_stats(int argc, char **argv,
 	temperature = ((smart_log.temperature[1] << 8) | smart_log.temperature[0]) - 273;
 
 	/* retrieve HCTM Thermal Management Temperatures */
-   	nvme_get_feature(fd, 0, 0x10, 0, 0, 0, 0, &hctm_tmt);
+	nvme_get_feature(fd, 0, 0x10, 0, 0, 0, 0, &hctm_tmt);
    	temp_tmt1 = ((hctm_tmt >> 16) & 0xffff) ? ((hctm_tmt >> 16) & 0xffff) - 273 : 0;
    	temp_tmt2 = (hctm_tmt & 0xffff) ? (hctm_tmt & 0xffff) - 273 : 0;
 
@@ -7804,8 +7834,10 @@ static int wdc_capabilities(int argc, char **argv,
     printf("get-pfail-dump                : %s\n", 
             capabilities & WDC_DRIVE_CAP_PFAIL_DUMP ? "Supported" : "Not Supported");
     printf("id-ctrl                       : Supported\n");
-    printf("purge                         : Supported\n");
-    printf("purge-monitor                 : Supported\n");
+    printf("purge                         : %s\n",
+            capabilities & WDC_DRIVE_CAP_PURGE ? "Supported" : "Not Supported");
+    printf("purge-monitor                 : %s\n",
+            capabilities & WDC_DRIVE_CAP_PURGE ? "Supported" : "Not Supported");
     printf("vs-internal-log               : %s\n", 
             capabilities & WDC_DRIVE_CAP_INTERNAL_LOG_MASK ? "Supported" : "Not Supported");
     printf("vs-nand-stats                 : %s\n", 
@@ -7900,7 +7932,7 @@ static int wdc_plugin_version(int argc, char **argv,
         return fd;
 
     /* print command and supported status */
-    printf("%s\n", nvme_plugin_version_string);
+    printf("%s\n", WDC_PLUGIN_VERSION);
 
     return 0;
 }
